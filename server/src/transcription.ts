@@ -6,6 +6,7 @@ import type { MediaFormat } from "./parser.js";
 import { config, type AppConfig } from "./config.js";
 import { TranscriptionFailedError, TranscriptionUnavailableError } from "./errors.js";
 import { runProcess } from "./process.js";
+import { cleanupPreparedMedia, downloadAudioWithYtDlp, type PreparedMediaFile } from "./media-download.js";
 
 export interface TranscriptResult {
   rawText: string;
@@ -74,12 +75,36 @@ export function buildFfmpegArgs(format: MediaFormat, outputPath: string): string
   const headers = Object.entries(format.httpHeaders)
     .map(([name, value]) => `${name}: ${value}`)
     .join("\r\n");
+  return buildFfmpegInputArgs(format.url, outputPath, headers);
+}
+
+export function buildFfmpegFileArgs(inputPath: string, outputPath: string): string[] {
+  return buildFfmpegInputArgs(inputPath, outputPath);
+}
+
+export function buildWhisperArgs(
+  scriptPath: string,
+  audioPath: string,
+  model: string,
+  language: string,
+  ffmpegPath: string,
+): string[] {
+  return [
+    scriptPath,
+    "--audio", audioPath,
+    "--model", model,
+    "--language", language,
+    "--ffmpeg-path", ffmpegPath,
+  ];
+}
+
+function buildFfmpegInputArgs(inputPath: string, outputPath: string, headers = ""): string[] {
   return [
     "-hide_banner",
     "-loglevel", "error",
     "-nostdin",
     ...(headers ? ["-headers", `${headers}\r\n`] : []),
-    "-i", format.url,
+    "-i", inputPath,
     "-vn",
     "-acodec", "pcm_s16le",
     "-ar", "16000",
@@ -109,6 +134,7 @@ export class TranscriptService {
   public async transcribeFormat(
     format: MediaFormat,
     options: { language?: string; model?: string } = {},
+    sourceUrl?: string,
   ): Promise<TranscriptResult> {
     if (!this.appConfig.transcriptionEnabled) {
       throw new TranscriptionUnavailableError("Transcription is disabled by TRANSCRIPTION_ENABLED=false.");
@@ -119,14 +145,16 @@ export class TranscriptService {
     const workDir = join(tmpdir(), `junvideo-transcribe-${randomUUID()}`);
     const audioPath = join(workDir, "audio.wav");
     const scriptPath = join(process.cwd(), "scripts", "transcribe_audio.py");
+    let preparedAudio: PreparedMediaFile | undefined;
     await mkdir(workDir, { recursive: true });
 
     try {
+      if (sourceUrl) preparedAudio = await downloadAudioWithYtDlp(sourceUrl, format, this.appConfig);
       let audioResult;
       try {
         audioResult = await runProcess(
           this.appConfig.ffmpegPath,
-          buildFfmpegArgs(format, audioPath),
+          preparedAudio ? buildFfmpegFileArgs(preparedAudio.filePath, audioPath) : buildFfmpegArgs(format, audioPath),
           this.appConfig.transcriptionTimeoutMs,
           2 * 1024 * 1024,
         );
@@ -156,7 +184,7 @@ export class TranscriptService {
       try {
         whisperResult = await runProcess(
           this.appConfig.pythonPath,
-          [scriptPath, "--audio", audioPath, "--model", model, "--language", language],
+          buildWhisperArgs(scriptPath, audioPath, model, language, this.appConfig.ffmpegPath),
           this.appConfig.transcriptionTimeoutMs,
           4 * 1024 * 1024,
         );
@@ -197,6 +225,7 @@ export class TranscriptService {
       }
       return { rawText, correctedText, language, model, correctionMode };
     } finally {
+      if (preparedAudio) await cleanupPreparedMedia(preparedAudio);
       await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
     }
   }

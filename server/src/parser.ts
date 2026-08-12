@@ -30,6 +30,19 @@ export interface MediaFormat {
   hasVideo: boolean;
   hasAudio: boolean;
   requiresMuxing: boolean;
+  /**
+   * Some fallback adapters return a fresh direct URL but do not expose a
+   * source URL that yt-dlp can resolve again. Those formats must be proxied
+   * directly instead of being sent through the yt-dlp download path.
+   */
+  downloadMode?: "yt-dlp" | "direct";
+  /**
+   * When yt-dlp exposes separate DASH video/audio streams, this points to the
+   * audio format that should be merged when the user downloads the video.
+   * Keeping the format id (instead of another expiring URL) lets the download
+   * request ask yt-dlp for a fresh signed URL.
+   */
+  audioFormatId?: string | null;
   httpHeaders: Record<string, string>;
 }
 
@@ -178,7 +191,7 @@ function safeMediaHeaders(value: unknown): Record<string, string> {
   for (const [rawName, rawValue] of Object.entries(value as Record<string, unknown>)) {
     const name = FORWARDED_MEDIA_HEADERS[rawName.toLowerCase()];
     if (!name || typeof rawValue !== "string") continue;
-    const headerValue = rawValue.trim();
+    const headerValue = rawValue.replace(/[\r\n]+/gu, " ").trim();
     if (headerValue && headerValue.length <= 2_000) headers[name] = headerValue;
   }
   return headers;
@@ -217,8 +230,19 @@ function mediaFormatFromRaw(raw: Record<string, unknown>, index: number): MediaF
 
   const videoCodec = safeText(raw.vcodec);
   const audioCodec = safeText(raw.acodec);
-  const hasVideo = Boolean(videoCodec && videoCodec !== "none");
-  const hasAudio = Boolean(audioCodec && audioCodec !== "none");
+  const videoExt = safeText(raw.video_ext);
+  const audioExt = safeText(raw.audio_ext);
+  const mime = safeText(raw.mime) ?? safeText(raw.mimetype);
+  const hasVideo = Boolean(
+    (videoCodec && videoCodec !== "none")
+      || (!videoCodec && videoExt && videoExt !== "none")
+      || (!videoCodec && !videoExt && mime?.toLowerCase().startsWith("video/")),
+  );
+  const hasAudio = Boolean(
+    (audioCodec && audioCodec !== "none")
+      || (!audioCodec && audioExt && audioExt !== "none")
+      || (!audioCodec && !audioExt && mime?.toLowerCase().startsWith("audio/")),
+  );
   if (!hasVideo && !hasAudio) return null;
 
   const width = safeNumber(raw.width, 1);
@@ -254,7 +278,7 @@ function mediaFormatFromRaw(raw: Record<string, unknown>, index: number): MediaF
     id: id.slice(0, 100),
     url: rawUrl,
     ext: ext?.slice(0, 20) ?? null,
-    mimeType: safeText(raw.mime) ?? safeText(raw.mimetype) ?? inferredMimeType(ext, hasVideo, hasAudio),
+    mimeType: mime ?? inferredMimeType(ext, hasVideo, hasAudio),
     width,
     height,
     fps,
@@ -265,11 +289,35 @@ function mediaFormatFromRaw(raw: Record<string, unknown>, index: number): MediaF
     audioCodec,
     hasVideo,
     hasAudio,
-    // A direct muxed format is already playable. Only video-only formats need
-    // a server-side merge, which JunVideo currently exposes as a raw stream.
+    // A direct muxed format is already playable. Separate video/audio formats
+    // are re-resolved and merged through yt-dlp/ffmpeg at download time.
     requiresMuxing: hasVideo && !hasAudio,
     httpHeaders: safeMediaHeaders(raw.http_headers),
   };
+}
+
+function requestedFormatEntries(info: Record<string, unknown>): unknown[] {
+  const formats = Array.isArray(info.formats) ? info.formats : [];
+  const requestedFormats = Array.isArray(info.requested_formats) ? info.requested_formats : [];
+  const requestedDownloads = Array.isArray(info.requested_downloads)
+    ? info.requested_downloads.flatMap((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const requested = (value as Record<string, unknown>).requested_formats;
+        return Array.isArray(requested) ? requested : [value];
+      })
+    : [];
+  return [...formats, ...requestedFormats, ...requestedDownloads];
+}
+
+function attachPreferredAudioFormat(formats: MediaFormat[]): MediaFormat[] {
+  const preferredAudio = formats
+    .filter((format) => format.hasAudio && !format.hasVideo)
+    .sort((a, b) => (b.bitrateKbps ?? 0) - (a.bitrateKbps ?? 0) || (b.filesize ?? 0) - (a.filesize ?? 0))[0];
+  if (!preferredAudio) return formats;
+
+  return formats.map((format) => format.hasVideo && !format.hasAudio
+    ? { ...format, audioFormatId: preferredAudio.id }
+    : format);
 }
 
 function deduplicateFormats(formats: MediaFormat[]): MediaFormat[] {
@@ -329,17 +377,14 @@ export function selectDisplayVideoFormats(formats: MediaFormat[]): MediaFormat[]
 }
 
 export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequest): ParseResult {
-  const rawFormats = [
-    ...(Array.isArray(info.formats) ? info.formats : []),
-    ...(Array.isArray(info.requested_formats) ? info.requested_formats : []),
-  ];
-  const formats = deduplicateFormats(
-    rawFormats.flatMap((value, index) => {
+  const directMediaOnly = info.browserFallback === true || info.directMediaOnly === true;
+  const formats = attachPreferredAudioFormat(deduplicateFormats(
+    requestedFormatEntries(info).flatMap((value, index) => {
       if (!value || typeof value !== "object") return [];
       const format = mediaFormatFromRaw(value as Record<string, unknown>, index);
       return format ? [format] : [];
     }),
-  );
+  )).map((format) => directMediaOnly ? { ...format, downloadMode: "direct" as const } : format);
 
   const fallbackUrl = safeText(info.url);
   if (formats.length === 0 && fallbackUrl && isSafeRemoteHttpUrl(fallbackUrl)) {
@@ -403,6 +448,17 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
   };
 }
 
+/**
+ * Return a yt-dlp format selector suitable for a fresh download. Separate
+ * video/audio streams are merged by yt-dlp and ffmpeg at download time.
+ */
+export function formatSelectorFor(format: MediaFormat): string | null {
+  if (!format.id || !/^[A-Za-z0-9._:-]{1,100}$/u.test(format.id)) return null;
+  if (!format.hasVideo || format.hasAudio || !format.audioFormatId) return format.id;
+  if (!/^[A-Za-z0-9._:-]{1,100}$/u.test(format.audioFormatId)) return null;
+  return `${format.id}+${format.audioFormatId}`;
+}
+
 export class YtDlpAdapter implements ParserAdapter {
   public readonly name = "yt-dlp";
   private availabilityCache: { checkedAt: number; available: boolean; message: string } | null = null;
@@ -418,7 +474,7 @@ export class YtDlpAdapter implements ParserAdapter {
         cookie: this.appConfig.xhsDownloaderCookie,
         proxy: this.appConfig.xhsDownloaderProxy,
       });
-      return parseYtDlpInfo(sidecarInfo, request);
+      return parseYtDlpInfo({ ...sidecarInfo, directMediaOnly: true }, request);
     } catch {
       // The optional sidecar must never hide the primary yt-dlp diagnostic.
       return null;
@@ -585,6 +641,7 @@ export class MockParserAdapter implements ParserAdapter {
           hasVideo: true,
           hasAudio: false,
           requiresMuxing: true,
+          downloadMode: "direct",
           httpHeaders: {},
         },
       ],
@@ -605,6 +662,7 @@ export class MockParserAdapter implements ParserAdapter {
           hasVideo: false,
           hasAudio: true,
           requiresMuxing: false,
+          downloadMode: "direct",
           httpHeaders: {},
         },
       ],

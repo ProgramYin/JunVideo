@@ -1,5 +1,6 @@
+import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import { Router, type NextFunction, type Request } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { config } from "./config.js";
 import { findUserByEmail, sendAuthResponse, toPublicUser, verifyPassword, createUser, requireAuth, authenticatedUser } from "./auth.js";
 import { checkDatabase, pool, query, withTransaction } from "./db.js";
@@ -13,6 +14,7 @@ import {
   type ParseJobRow,
 } from "./jobs.js";
 import { ParserService, parseRequestFromPreflight } from "./parser.js";
+import { cleanupPreparedMedia, downloadAudioWithYtDlp, downloadVideoWithYtDlp, type PreparedMediaFile } from "./media-download.js";
 import { extractUrlFromText, isSafeRemoteHttpUrl, platformCatalog, preflightUrl } from "./platform.js";
 import { TranscriptService } from "./transcription.js";
 import { getUsageSnapshot, reserveParseAttempt } from "./usage.js";
@@ -127,6 +129,41 @@ async function markJobFailed(jobId: string, error: AppError): Promise<ParseJobRo
 function contentDisposition(filename: string): string {
   const asciiFilename = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+function mergedVideoFilename(job: ParseJobRow, format: ReturnType<typeof selectMediaFormat>): string {
+  return safeDownloadFilename(job.title, "video", { ...format, ext: "mp4", mimeType: "video/mp4" });
+}
+
+function preparedAudioFilename(job: ParseJobRow, format: ReturnType<typeof selectMediaFormat>): string {
+  return safeDownloadFilename(job.title, "audio", format);
+}
+
+function streamPreparedMedia(
+  prepared: PreparedMediaFile,
+  response: Response,
+  next: NextFunction,
+  filename: string,
+): void {
+  response.setHeader("Content-Type", prepared.contentType);
+  response.setHeader("Content-Disposition", contentDisposition(filename));
+  response.setHeader("Cache-Control", "private, no-store");
+
+  const stream = createReadStream(prepared.filePath);
+  let cleaned = false;
+  const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
+    void cleanupPreparedMedia(prepared);
+  };
+  response.once("finish", cleanup);
+  response.once("close", cleanup);
+  stream.once("error", (error) => {
+    cleanup();
+    if (!response.headersSent) next(new AppError(502, "MEDIA_STREAM_FAILED", "The prepared media file could not be read."));
+    else response.destroy(error);
+  });
+  stream.pipe(response);
 }
 
 async function fetchRemoteMedia(initialUrl: string, forwardedHeaders: Record<string, string> = {}): Promise<{
@@ -350,7 +387,7 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
       throw new AppError(422, "AUDIO_STREAM_NOT_FOUND", "The parsed result does not contain an audio stream for transcription.");
     }
     const options = parseBody(transcriptionBodySchema, request.body ?? {});
-    const transcript = await transcriptService.transcribeFormat(format, options);
+    const transcript = await transcriptService.transcribeFormat(format, options, job.canonical_url);
     response.status(200).json({ transcript });
   }));
 
@@ -370,7 +407,7 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
     response.json({ job: toParseJobView(job) });
   }));
 
-  router.get("/download/:jobId/:kind", requireAuth, asyncHandler(async (request, response) => {
+  router.get("/download/:jobId/:kind", requireAuth, asyncHandler(async (request, response, next: NextFunction) => {
     const user = authenticatedUser(request);
     const job = await findOwnedJob(jobIdFromRequest(request), user.id);
     if (job.status !== "succeeded") {
@@ -379,6 +416,16 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
     const kind = mediaKind(request.params.kind);
     const format = selectMediaFormat(job, kind, requestedFormatId(request));
     response.setHeader("Cache-Control", "private, no-store");
+    if (kind === "video" && format.downloadMode !== "direct") {
+      const prepared = await downloadVideoWithYtDlp(job.canonical_url, format, config);
+      streamPreparedMedia(prepared, response, next, mergedVideoFilename(job, format));
+      return;
+    }
+    if (kind === "audio" && format.downloadMode !== "direct") {
+      const prepared = await downloadAudioWithYtDlp(job.canonical_url, format, config);
+      streamPreparedMedia(prepared, response, next, preparedAudioFilename(job, format));
+      return;
+    }
     response.redirect(302, format.url);
   }));
 
@@ -390,6 +437,16 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
     }
     const kind = mediaKind(request.params.kind);
     const format = selectMediaFormat(job, kind, requestedFormatId(request));
+    if (kind === "video" && format.downloadMode !== "direct") {
+      const prepared = await downloadVideoWithYtDlp(job.canonical_url, format, config);
+      streamPreparedMedia(prepared, response, next, mergedVideoFilename(job, format));
+      return;
+    }
+    if (kind === "audio" && format.downloadMode !== "direct") {
+      const prepared = await downloadAudioWithYtDlp(job.canonical_url, format, config);
+      streamPreparedMedia(prepared, response, next, preparedAudioFilename(job, format));
+      return;
+    }
     const remote = await fetchRemoteMedia(format.url, format.httpHeaders);
     const filename = safeDownloadFilename(job.title, kind, format);
     const contentType = (format.mimeType ?? remote.response.headers.get("content-type") ?? "application/octet-stream")
@@ -411,7 +468,7 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
       if (!response.headersSent) next(new AppError(502, "MEDIA_STREAM_FAILED", "The media stream ended unexpectedly."));
       else response.destroy(error);
     });
-    request.once("close", () => remote.controller.abort());
+    response.once("close", () => remote.controller.abort());
     stream.pipe(response);
   }));
 

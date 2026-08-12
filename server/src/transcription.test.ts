@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildFfmpegArgs, correctTranscript } from "./transcription.js";
+import { buildFfmpegArgs, buildWhisperArgs, correctTranscript } from "./transcription.js";
 
 test("transcript correction fixes common Chinese ASR errors without rewriting wording", () => {
   assert.equal(correctTranscript("今天讲克服问题，最后做富盘。"), "今天讲客服问题，最后做复盘。");
@@ -29,4 +29,15 @@ test("ffmpeg receives yt-dlp request headers and extracts mono 16k audio", () =>
   assert.ok(args.includes("-ar"));
   assert.ok(args.includes("16000"));
   assert.equal(args.at(-1), "C:\\temp\\junvideo-audio.wav");
+});
+
+test("Whisper receives the configured ffmpeg path for its audio loader", () => {
+  const args = buildWhisperArgs(
+    "D:\\JunVideo\\scripts\\transcribe_audio.py",
+    "D:\\Temp\\audio.wav",
+    "tiny",
+    "Chinese",
+    "C:\\Tools\\ffmpeg\\ffmpeg.exe",
+  );
+  assert.deepEqual(args.slice(-2), ["--ffmpeg-path", "C:\\Tools\\ffmpeg\\ffmpeg.exe"]);
 });

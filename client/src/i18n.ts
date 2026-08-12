@@ -5,14 +5,14 @@ export const defaultLocale: Locale = configuredDefaultLocale === 'en' ? 'en' : '
 
 export const copy = {
   zh: {
-    transcriptTitle: '瑙嗛鏂囨湰',
-    transcribe: '鎻愬彇鏂囨湰',
-    transcribing: '姝ｅ湪杞啓',
-    correctedTranscript: '鏍℃鍚庢枃鏈?',
-    rawTranscript: '鍘熷杞啓',
-    copyTranscript: '澶嶅埗鏂囨湰',
-    copied: '宸插鍒?',
-    transcriptionFailed: '瑙嗛鏂囨湰鎻愬彇澶辫触',
+    transcriptTitle: '视频文本',
+    transcribe: '提取文本',
+    transcribing: '正在转写',
+    correctedTranscript: '校正后文本',
+    rawTranscript: '原始转写',
+    copyTranscript: '复制文本',
+    copied: '已复制',
+    transcriptionFailed: '视频文本提取失败',
     navWorkbench: '解析工作台',
     navHistory: '解析历史',
     navVip: '会员方案',

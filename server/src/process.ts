@@ -34,21 +34,38 @@ export function runProcess(
     let outputBytes = 0;
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let terminationError: Error | undefined;
 
     const finish = (error?: Error, result?: ProcessResult): void => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
       if (error) reject(error);
       else resolve(result as ProcessResult);
     };
 
+    const terminate = (error: Error): void => {
+      if (settled || terminationError) return;
+      terminationError = error;
+      try {
+        child.kill();
+      } catch {
+        finish(error);
+        return;
+      }
+      // A child that ignores the first termination signal must not leave the
+      // request hanging forever or keep a temporary download directory open.
+      killTimer = setTimeout(() => finish(error), 1_000);
+    };
+
     const append = (target: "stdout" | "stderr", chunk: Buffer | string): void => {
+      if (terminationError) return;
       const text = chunk.toString();
       outputBytes += Buffer.byteLength(text);
       if (outputBytes > maxOutputBytes) {
-        child.kill();
-        finish(new Error("Process output exceeded the configured safety limit."));
+        terminate(new Error("Process output exceeded the configured safety limit."));
         return;
       }
       if (target === "stdout") stdout += text;
@@ -57,12 +74,15 @@ export function runProcess(
 
     child.stdout.on("data", (chunk: Buffer | string) => append("stdout", chunk));
     child.stderr.on("data", (chunk: Buffer | string) => append("stderr", chunk));
-    child.once("error", (error) => finish(error));
-    child.once("close", (exitCode, signal) => finish(undefined, { exitCode, signal, stdout, stderr }));
+    child.once("error", (error) => {
+      if (terminationError) finish(terminationError);
+      else finish(error);
+    });
+    child.once("close", (exitCode, signal) => {
+      if (terminationError) finish(terminationError);
+      else finish(undefined, { exitCode, signal, stdout, stderr });
+    });
 
-    timer = setTimeout(() => {
-      child.kill();
-      finish(new Error(`Process timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
+    timer = setTimeout(() => terminate(new Error(`Process timed out after ${timeoutMs}ms.`)), timeoutMs);
   });
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildYtDlpArgs, parseYtDlpInfo, selectDisplayVideoFormats, type MediaFormat, type ParseRequest } from "./parser.js";
+import { buildYtDlpArgs, formatSelectorFor, parseYtDlpInfo, selectDisplayVideoFormats, type MediaFormat, type ParseRequest } from "./parser.js";
 
 function video(id: string, height: number | null, fps: number | null, bitrateKbps: number): MediaFormat {
   return {
@@ -110,4 +110,83 @@ test("yt-dlp formats normalize string numbers and preserve playable muxed stream
     "User-Agent": "JunVideo test",
     Referer: "https://www.bilibili.com/",
   });
+});
+
+test("separate yt-dlp streams retain a fresh-download audio pairing", () => {
+  const request: ParseRequest = {
+    sourceUrl: "https://www.bilibili.com/video/BV1test",
+    canonicalUrl: "https://www.bilibili.com/video/BV1test",
+    platform: { id: "bilibili", label: "Bilibili", hostname: "bilibili.com", recognized: true },
+  };
+  const result = parseYtDlpInfo({
+    title: "Separated streams",
+    formats: [
+      {
+        format_id: "video-1080",
+        url: "https://cdn.example.com/video-1080.m4s",
+        video_ext: "mp4",
+        width: 1920,
+        height: 1080,
+        vcodec: "avc1",
+        acodec: "none",
+        tbr: 2_000,
+      },
+      {
+        format_id: "audio-128",
+        url: "https://cdn.example.com/audio-128.m4s",
+        audio_ext: "m4a",
+        vcodec: "none",
+        acodec: "mp4a.40.2",
+        abr: 128,
+      },
+    ],
+    requested_downloads: [{
+      requested_formats: [
+        {
+          format_id: "video-1080",
+          url: "https://cdn.example.com/video-1080.m4s",
+          video_ext: "mp4",
+          vcodec: "avc1",
+          acodec: "none",
+          height: 1080,
+        },
+        {
+          format_id: "audio-128",
+          url: "https://cdn.example.com/audio-128.m4s",
+          audio_ext: "m4a",
+          vcodec: "none",
+          acodec: "mp4a.40.2",
+          abr: 128,
+        },
+      ],
+    }],
+  }, request);
+
+  assert.equal(result.videoFormats[0]?.audioFormatId, "audio-128");
+  assert.equal(formatSelectorFor(result.videoFormats[0]!), "video-1080+audio-128");
+  assert.equal(result.audioFormats[0]?.id, "audio-128");
+});
+
+test("browser fallback formats stay on their fresh direct media URLs", () => {
+  const result = parseYtDlpInfo({
+    browserFallback: true,
+    title: "Browser fallback",
+    webpage_url: "https://www.douyin.com/video/123",
+    formats: [{
+      format_id: "browser-quality-0-0",
+      url: "https://cdn.example.com/fresh.mp4",
+      ext: "mp4",
+      mime: "video/mp4",
+      vcodec: "h264",
+      acodec: "aac",
+      width: 720,
+      height: 1280,
+    }],
+  }, {
+    sourceUrl: "https://www.douyin.com/video/123",
+    canonicalUrl: "https://www.douyin.com/video/123",
+    platform: { id: "douyin", label: "Douyin", hostname: "douyin.com", recognized: true },
+  });
+
+  assert.equal(result.videoFormats[0]?.downloadMode, "direct");
 });

@@ -42,7 +42,7 @@ npm run dev
 npm run setup:ytdlp
 ```
 
-脚本会把官方 release 放入 `bin/yt-dlp.exe`；如果系统已有 `yt-dlp`，也可以设置 `.env` 的 `YTDLP_PATH` 或放入 `PATH`。当前界面会分别提供视频流和音频流下载；若要在服务器端合并为单文件，后续可接入 ffmpeg 任务队列。没有二进制时，可在 `.env` 写入 `PARSER_MODE=mock`，用于接口和界面验收。
+脚本会把官方 release 放入 `bin/yt-dlp.exe`；如果系统已有 `yt-dlp`，也可以设置 `.env` 的 `YTDLP_PATH` 或放入 `PATH`。视频下载会在请求时重新调用 yt-dlp 获取新鲜的签名地址；遇到视频/音频分离格式时由 yt-dlp 调用 ffmpeg 合并为 MP4。没有 yt-dlp 时，可在 `.env` 写入 `PARSER_MODE=mock`，用于接口和界面验收。
 
 部分公开链接（尤其是抖音等平台的近期页面）会要求解析器带上一个新鲜的、由你授权使用的浏览器会话。此时只配置下面两项中的一项：
 
@@ -55,7 +55,7 @@ Cookie 文件、浏览器 profile 和登录凭据不要提交到仓库，也不�
 
 开发环境可以调用 `POST /api/dev/vip/activate` 为当前账号开启本地测试 VIP；生产环境该接口关闭，真实支付订单和 webhook 需要接入独立的 billing service。
 
-目前下载入口直接代理平台返回的视频/音频流；视频与音频分离时分别提供下载选项。`FFMPEG_PATH` 是后续服务端合并能力的预留配置，目前不会触发合并任务。
+视频下载入口不会复用解析阶段缓存的临时媒体 URL，而是按用户选择的格式重新授权下载；视频与音频分离时自动合并为带声音的 MP4。音频和封面仍通过鉴权代理读取平台返回的媒体流。请配置可执行的 `FFMPEG_PATH`，否则分离视频无法合并。
 
 ## 常用命令
 
@@ -111,6 +111,8 @@ Install the optional local transcription runtime on the API machine:
 ```powershell
 python -m pip install -r requirements-transcription.txt
 ```
+
+Windows 如果 `python` 仍指向 Microsoft Store 的占位别名，可改用 `npm run setup:transcription`；脚本会自动寻找本机 Python，或读取 `.env` 中的 `PYTHON_PATH`。
 
 `ffmpeg` must be installed and available through `FFMPEG_PATH`. `WHISPER_MODEL=tiny` is the fast default. `CORRECTION_MODE=rules` works offline with conservative common-ASR corrections; set `CORRECTION_MODE=openai` and configure `OPENAI_API_KEY` to use an OpenAI-compatible HTTP correction endpoint. The raw transcript is retained in the response alongside the corrected text, and temporary audio files are removed after each request.
 
