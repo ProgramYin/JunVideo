@@ -51,6 +51,14 @@ function urlsFromValue(value: unknown): string[] {
   return direct ? [direct] : [];
 }
 
+function stringValues(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const text = asString(item);
+    return text ? [text] : [];
+  });
+}
+
 function endpointFromConfig(apiUrl: string): string {
   const trimmed = apiUrl.trim().replace(/\/+$/u, "");
   let parsed: URL;
@@ -81,7 +89,9 @@ function findNote(value: unknown, depth = 0): Record<string, unknown> | null {
   const type = asString(record.type)?.toLowerCase();
   const looksLikeNote = (type === "video" || type === "normal") &&
     (record.video !== undefined || Array.isArray(record.imageList) || record.noteId !== undefined);
-  if (looksLikeNote) return record;
+  const looksLikeLocalizedNote = firstString(record, ["作品ID", "作品类型"]) !== null
+    && Array.isArray(record["下载地址"]);
+  if (looksLikeNote || looksLikeLocalizedNote) return record;
 
   for (const child of Object.values(record)) {
     const note = findNote(child, depth + 1);
@@ -170,7 +180,59 @@ function videoRawFormats(note: Record<string, unknown>): Record<string, unknown>
       format_note: "XHS video stream",
     });
   }
+
+
+  if (firstString(note, ["作品类型"]) === "视频") {
+    const urls = stringValues(note["下载地址"])
+      .map(safeUrl)
+      .filter((value): value is string => Boolean(value));
+    for (const [index, url] of urls.entries()) {
+      rawFormats.push({
+        url,
+        format_id: `xhs-video-${index}`,
+        ext: "mp4",
+        mime: "video/mp4",
+        vcodec: "h264",
+        acodec: "aac",
+        format_note: "XHS video stream",
+      });
+    }
+  }
   return rawFormats;
+}
+
+function imageRawFormats(note: Record<string, unknown>): Record<string, unknown>[] {
+  const imageList = Array.isArray(note.imageList) ? note.imageList : [];
+  const nested: Array<{ url: string; width: number | null; height: number | null }> = imageList.flatMap((value) => {
+    const item = asRecord(value);
+    const url = imageUrlFromItem(item);
+    return url ? [{
+      url,
+      width: asNumber(item.width),
+      height: asNumber(item.height),
+    }] : [];
+  });
+  const localized: Array<{ url: string; width: number | null; height: number | null }> = firstString(note, ["作品类型"]) === "图文"
+    ? stringValues(note["下载地址"])
+        .map(safeUrl)
+        .filter((value): value is string => Boolean(value))
+        .map((url) => ({ url, width: null, height: null }))
+    : [];
+  const source = localized.length > 0 ? localized : nested;
+  const seen = new Set<string>();
+  return source.flatMap((item, index) => {
+    if (seen.has(item.url)) return [];
+    seen.add(item.url);
+    return [{
+      url: item.url,
+      format_id: `image-${index + 1}`,
+      ext: "jpg",
+      mime: "image/jpeg",
+      width: item.width,
+      height: item.height,
+      format_note: `Image ${index + 1}`,
+    }];
+  });
 }
 
 function audioRawFormats(note: Record<string, unknown>): Record<string, unknown>[] {
@@ -193,10 +255,12 @@ function audioRawFormats(note: Record<string, unknown>): Record<string, unknown>
 
 function buildYtDlpInfo(payload: unknown, pageUrl: string): Record<string, unknown> {
   const note = findNote(payload) ?? asRecord(payload);
-  const title = firstString(note, ["title", "displayTitle", "desc"]) ?? "Xiaohongshu note";
-  const thumbnail = Array.isArray(note.imageList)
-    ? note.imageList.map((item) => imageUrlFromItem(item)).find(Boolean) ?? null
-    : firstString(note, ["cover", "coverUrl", "image"]);
+  const title = firstString(note, ["title", "displayTitle", "作品标题", "desc", "作品描述"]) ?? "Xiaohongshu note";
+  const imageFormats = imageRawFormats(note);
+  const thumbnail = safeUrl(imageFormats[0]?.url)
+    ?? (Array.isArray(note.imageList)
+      ? note.imageList.map((item) => imageUrlFromItem(item)).find(Boolean) ?? null
+      : firstString(note, ["cover", "coverUrl", "image"]));
   const durationRaw = firstString(note, ["video.duration", "duration"]);
   const durationNumber = durationRaw === null ? asNumber(pathValue(note, "video.duration")) ?? asNumber(note.duration) : Number(durationRaw);
   const duration = durationNumber !== null && Number.isFinite(durationNumber)
@@ -204,15 +268,16 @@ function buildYtDlpInfo(payload: unknown, pageUrl: string): Record<string, unkno
     : null;
 
   return {
-    id: firstString(note, ["noteId", "id"]) ?? "unknown",
+    id: firstString(note, ["noteId", "id", "作品ID"]) ?? "unknown",
     title,
-    description: asString(note.desc) ?? asString(note.description),
-    uploader: firstString(note, ["user.nickname", "user.nickName", "author.nickname", "author.nickName"]),
+    description: asString(note.desc) ?? asString(note.description) ?? asString(note["作品描述"]),
+    uploader: firstString(note, ["user.nickname", "user.nickName", "author.nickname", "author.nickName", "作者昵称"]),
     duration,
     thumbnail,
     webpage_url: pageUrl,
     extractor: "xhs-downloader-api",
     formats: [...videoRawFormats(note), ...audioRawFormats(note)],
+    image_formats: imageFormats,
     xhsDownloader: true,
   };
 }
@@ -251,7 +316,9 @@ export async function extractXhsInfoWithDownloader(
       throw new XhsDownloaderAdapterError("XHS-Downloader API returned invalid JSON.");
     }
     const info = buildYtDlpInfo(payload, pageUrl);
-    if (!Array.isArray(info.formats) || info.formats.length === 0) {
+    const hasFormats = Array.isArray(info.formats) && info.formats.length > 0;
+    const hasImages = Array.isArray(info.image_formats) && info.image_formats.length > 0;
+    if (!hasFormats && !hasImages) {
       throw new XhsDownloaderAdapterError("XHS-Downloader returned no safe media URLs.");
     }
     return info;

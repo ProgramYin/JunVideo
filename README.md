@@ -102,25 +102,17 @@ The sidecar endpoint is called only after the normal yt-dlp attempt cannot produ
 
 JunVideo persists every normalized, structurally unique video format in `metadata.allVideoFormats`. The workspace intentionally displays only one format per detected height: the highest FPS stream wins, then bitrate, width, audio presence, and file size are used as tie breakers. A hidden remembered format can still be downloaded by its format id through the authenticated proxy API, while ordinary users see a short resolution list.
 
-## Video transcription and correction
+## Subtitle text extraction (no AI)
 
-JunVideo now includes the reference Skill's workflow: `yt-dlp` metadata/stream selection, audio extraction through `ffmpeg`, local Whisper transcription, then transcript correction. The API endpoint is `POST /api/transcribe/:jobId`; the workspace exposes it below a successful parse result.
+JunVideo reads text tracks already supplied by the source media. It does not invoke Whisper, an online language model, speech recognition, or screen OCR. The endpoint is `POST /api/extract-text/:jobId`; its optional body is `{ "trackId": "...", "language": "zh-CN" }`. When both fields are omitted, the server deterministically selects a track by language, manual-versus-automatic origin, and subtitle format. The workspace exposes the same track and language choices.
 
-Install the optional local transcription runtime on the API machine:
+The platform-general pipeline has two layers: `yt-dlp` discovers and downloads manual or automatic tracks exposed by a site, while `ffprobe` and `ffmpeg` inspect embedded text subtitle streams. Inputs such as VTT, SRT, ASS/SSA, TTML/SRV, and JSON3 are normalized into cues before markup cleanup, consecutive-duplicate removal, and plain-text assembly. `TEXT_EXTRACTION_MAX_BYTES`, `TEXT_EXTRACTION_MAX_CUES`, `TEXT_EXTRACTION_MAX_CHARS`, and `TEXT_EXTRACTION_TIMEOUT_MS` bound each request.
 
-```powershell
-python -m pip install -r requirements-transcription.txt
-```
-
-Windows 如果 `python` 仍指向 Microsoft Store 的占位别名，可改用 `npm run setup:transcription`；脚本会自动寻找本机 Python，或读取 `.env` 中的 `PYTHON_PATH`。
-
-`ffmpeg` must be installed and available through `FFMPEG_PATH`. `WHISPER_MODEL=tiny` is the fast default. `CORRECTION_MODE=rules` works offline with conservative common-ASR corrections; set `CORRECTION_MODE=openai` and configure `OPENAI_API_KEY` to use an OpenAI-compatible HTTP correction endpoint. The raw transcript is retained in the response alongside the corrected text, and temporary audio files are removed after each request.
-
-The reference implementation is used for workflow and platform-boundary ideas, while JunVideo keeps yt-dlp as the primary extractor instead of vendoring a second platform parser. Only public, authorized media is supported; DRM, login walls, paywalls, and access-control bypass are not provided.
+The boundary is explicit: videos without a subtitle track, speech-only media, captions burned into video frames, and bitmap formats such as PGS, VobSub, or DVB cannot be converted into text. The API returns `TEXT_TRACK_NOT_FOUND` and never silently falls back to AI. Make `ffmpeg` and `ffprobe` available through `FFMPEG_PATH` and `FFPROBE_PATH`. Only public, authorized media is supported; JunVideo does not bypass DRM, login walls, paywalls, or access controls.
 
 ## 生产部署
 
-项目包含三套可复用的生产配置：Supabase 托管 PostgreSQL、Vercel Container 承载 Express + yt-dlp + FFmpeg + Whisper，以及 Cloudflare Pages 承载静态前端。`Dockerfile.vercel` 会在镜像内固定安装 yt-dlp `2026.7.4`、FFmpeg 和 Whisper tiny 模型；`supabase/migrations` 保存可追踪的数据库迁移；`public/_headers` 与 `public/_redirects` 负责 Pages 的安全头和 SPA 回退。
+The repository includes reusable production configurations for PostgreSQL on Supabase, Express with yt-dlp and FFmpeg in a Vercel Container, and the static client on Cloudflare Pages. `Dockerfile.vercel` installs yt-dlp `2026.7.4` plus FFmpeg/ffprobe; it contains no Whisper package, model weights, or OpenAI dependency. Database migrations live in `supabase/migrations`, while `public/_headers` and `public/_redirects` provide security headers and SPA fallback behavior.
 
 1. 在 Supabase 创建项目，取得 Transaction Pooler 连接串后执行迁移：
 

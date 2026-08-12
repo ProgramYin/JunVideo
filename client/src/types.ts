@@ -24,9 +24,13 @@ export interface DownloadOption {
   id: string;
   label: string;
   type: 'video' | 'audio' | 'image' | 'subtitle' | 'unknown';
+  /** One-based position within an image-note gallery. */
+  imageIndex?: number;
   ext?: string;
   quality?: string;
   size?: string | null;
+  language?: string;
+  automatic?: boolean;
   url?: string;
   downloadUrl?: string;
 }
@@ -51,12 +55,24 @@ export interface ParseJob {
   options?: DownloadOption[];
 }
 
-export interface TranscriptResult {
-  rawText: string;
-  correctedText: string;
+export interface SubtitleTextCue {
+  startMs: number;
+  endMs: number | null;
+  text: string;
+}
+
+export interface ExtractedTextResult {
+  text: string;
   language: string;
-  model: string;
-  correctionMode: 'rules' | 'openai' | 'none';
+  source: 'manual-subtitle' | 'automatic-caption' | 'embedded-subtitle' | string;
+  cueCount: number;
+  trackId?: string;
+  format?: string;
+  segments?: SubtitleTextCue[];
+  timestampedText?: string;
+  /** Optional compatibility fields for responses during a rolling deployment. */
+  rawText?: string;
+  correctedText?: string;
 }
 
 export interface ApiHealth {
@@ -70,7 +86,8 @@ export interface ApiHealth {
     extractorCount?: number | null;
   };
   features?: {
-    transcription: boolean;
+    textExtraction: boolean;
+    transcription?: boolean;
     devVip: boolean;
     subtitles: boolean;
   };

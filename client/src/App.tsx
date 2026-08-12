@@ -38,14 +38,14 @@ import {
   login,
   me,
   parseUrl,
-  transcribeVideo,
+  extractVideoText,
   register,
   saveLocale,
   setToken,
   usage,
 } from './api';
 import { defaultLocale, t, type CopyKey } from './i18n';
-import type { ApiHealth, DownloadOption, Locale, ParseJob, Usage, User, ViewName } from './types';
+import type { ApiHealth, DownloadOption, ExtractedTextResult, Locale, ParseJob, Usage, User, ViewName } from './types';
 
 async function retryStartupRequest<T>(request: () => Promise<T>, attempts = 8): Promise<T> {
   let lastError: unknown;
@@ -435,49 +435,76 @@ function ResultCardBase({ job, locale, tx, onRefresh }: { job: ParseJob | null; 
   const groups = (['video', 'audio', 'subtitle', 'image'] as const)
     .map((type) => ({ type, items: options.filter((option) => option.type === type) }))
     .filter((group) => group.items.length > 0);
+  const videoOptions = options.filter((option) => option.type === 'video');
+  const imageOptions = options.filter((option) => option.type === 'image');
   const views = formatCompactNumber(job.metadata?.viewCount, locale);
   const likes = formatCompactNumber(job.metadata?.likeCount, locale);
   return <div className="result-card">
     <div className="result-header"><div><span className="section-kicker">{tx('resultTitle')}</span><h2>{job.title || tx('ready')}</h2></div><span className="status-pill"><Check size={14} />{tx('ready')}</span></div>
-    <div className="result-media"><div className="thumbnail-wrap">{job.thumbnailUrl ? <img src={job.thumbnailUrl} alt="" /> : <div className="thumbnail-fallback"><Play size={24} fill="currentColor" /></div>}<span className="thumbnail-platform">{friendlyPlatform(job.platform)}</span></div><div className="result-info"><div className="metadata-line"><span><Link2 size={13} />{tx('source')} · {friendlyPlatform(job.platform)}</span><span><Clock3 size={13} />{formatDuration(job.durationSeconds)}</span></div><p>{job.author || 'JunVideo'}</p><small>{formatDate(job.createdAt, locale)}</small><div className="result-facts">{views && <span>{views} {tx('views')}</span>}{likes && <span>{likes} {tx('likes')}</span>}<span>{options.filter((option) => option.type === 'video').length} {tx('videoFormats')}</span>{options.some((option) => option.type === 'subtitle') && <span>{options.filter((option) => option.type === 'subtitle').length} {tx('subtitles')}</span>}</div></div></div>
+    <div className="result-media"><div className="thumbnail-wrap">{job.thumbnailUrl ? <img src={job.thumbnailUrl} alt="" referrerPolicy="no-referrer" /> : <div className="thumbnail-fallback"><Play size={24} fill="currentColor" /></div>}<span className="thumbnail-platform">{friendlyPlatform(job.platform)}</span></div><div className="result-info"><div className="metadata-line"><span><Link2 size={13} />{tx('source')} · {friendlyPlatform(job.platform)}</span><span><Clock3 size={13} />{formatDuration(job.durationSeconds)}</span></div><p>{job.author || 'JunVideo'}</p><small>{formatDate(job.createdAt, locale)}</small><div className="result-facts">{views && <span>{views} {tx('views')}</span>}{likes && <span>{likes} {tx('likes')}</span>}{videoOptions.length > 0 ? <span>{videoOptions.length} {tx('videoFormats')}</span> : imageOptions.length > 0 && <span>{imageOptions.length} {tx('images')}</span>}{options.some((option) => option.type === 'subtitle') && <span>{options.filter((option) => option.type === 'subtitle').length} {tx('subtitles')}</span>}</div></div></div>
     {job.description && <details className="source-description"><summary>{tx('sourceDescription')}</summary><p>{job.description}</p></details>}
-    <div className="download-options">{groups.length > 0 ? groups.map((group) => <section className="download-group" key={group.type}><div className="download-group-heading"><span>{tx(group.type === 'image' ? 'coverImage' : group.type === 'subtitle' ? 'captions' : group.type)}</span><small>{group.items.length}</small></div>{group.items.map((option) => <DownloadOptionRow key={option.id} option={option} job={job} tx={tx} onRefresh={onRefresh} />)}</section>) : <div className="option-placeholder"><span /><span /><span /></div>}</div>
+    <div className="download-options">{groups.length > 0 ? groups.map((group) => <section className="download-group" key={group.type}><div className="download-group-heading"><span>{tx(group.type === 'image' ? group.items.some((option) => option.imageIndex !== undefined) ? 'images' : 'coverImage' : group.type === 'subtitle' ? 'captions' : group.type)}</span><small>{group.items.length}</small></div>{group.items.map((option) => <DownloadOptionRow key={option.id} option={option} job={job} tx={tx} onRefresh={onRefresh} />)}</section>) : <div className="option-placeholder"><span /><span /><span /></div>}</div>
   </div>;
 }
 
 function ResultCard({ job, locale, tx, onRefresh }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
+  const hasTextContainer = job?.options?.some((option) => option.type === 'video' || option.type === 'subtitle') ?? false;
   return <>
     <ResultCardBase job={job} locale={locale} tx={tx} onRefresh={onRefresh} />
-    {job && job.status !== 'failed' && <TranscriptPanel job={job} tx={tx} />}
+    {job && job.status !== 'failed' && hasTextContainer && <TextExtractionPanel job={job} tx={tx} />}
   </>;
 }
 
-function TranscriptPanel({ job, tx }: { job: ParseJob; tx: (key: CopyKey) => string }) {
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [transcript, setTranscript] = useState<import('./types').TranscriptResult | null>(null);
+function TextExtractionPanel({ job, tx }: { job: ParseJob; tx: (key: CopyKey) => string }) {
+  const subtitleTracks = (job.options ?? []).filter((option) => option.type === 'subtitle');
+  const languages = [...new Set(subtitleTracks.map((option) => option.language).filter((value): value is string => Boolean(value)))];
+  const [selectedTrackId, setSelectedTrackId] = useState('');
+  const [selectedLanguage, setSelectedLanguage] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [result, setResult] = useState<ExtractedTextResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  async function startTranscription() {
-    setIsTranscribing(true);
+  useEffect(() => {
+    setSelectedTrackId('');
+    setSelectedLanguage('');
+    setResult(null);
+    setError(null);
+  }, [job.id]);
+
+  async function startExtraction() {
+    setIsExtracting(true);
     setError(null);
     try {
-      setTranscript(await transcribeVideo(job));
+      setResult(await extractVideoText(job, {
+        ...(selectedTrackId ? { trackId: selectedTrackId } : {}),
+        ...(selectedLanguage ? { language: selectedLanguage } : {}),
+      }));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : tx('transcriptionFailed'));
+      setError(cause instanceof ApiError && cause.code === 'TEXT_TRACK_NOT_FOUND'
+        ? tx('noTextTrack')
+        : cause instanceof Error ? cause.message : tx('textExtractionFailed'));
     } finally {
-      setIsTranscribing(false);
+      setIsExtracting(false);
     }
   }
 
-  async function copyTranscript() {
-    if (!transcript) return;
-    await navigator.clipboard.writeText(transcript.correctedText);
+  async function copyExtractedText() {
+    if (!result) return;
+    await navigator.clipboard.writeText(result.text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   }
 
-  return <section className="transcript-panel"><div className="transcript-heading"><div><span className="section-kicker">04 / {tx('transcriptTitle')}</span><h3><FileText size={17} />{tx('transcriptTitle')}</h3></div><button className="outline-button transcript-action" type="button" onClick={() => void startTranscription()} disabled={isTranscribing}>{isTranscribing ? <span className="button-spinner" /> : <FileText size={15} />}{isTranscribing ? tx('transcribing') : tx('transcribe')}</button></div>{error && <p className="transcript-error">{error}</p>}{transcript && <div className="transcript-result"><div className="transcript-result-top"><span>{transcript.correctionMode === 'openai' ? 'AI correction' : tx('correctedTranscript')}</span><button className="text-button" type="button" onClick={() => void copyTranscript()}><Copy size={14} />{copied ? tx('copied') : tx('copyTranscript')}</button></div><p>{transcript.correctedText}</p>{transcript.rawText !== transcript.correctedText && <details><summary>{tx('rawTranscript')}</summary><p>{transcript.rawText}</p></details>}</div>}</section>;
+  const sourceLabel = result?.source === 'manual-subtitle'
+    ? tx('manualSubtitle')
+    : result?.source === 'automatic-caption'
+      ? tx('automaticCaption')
+      : result?.source === 'embedded-subtitle'
+        ? tx('embeddedSubtitle')
+        : tx('unknownSubtitleSource');
+
+  return <section className="transcript-panel"><div className="transcript-heading"><div><span className="section-kicker">04 / {tx('textExtractionTitle')}</span><h3><FileText size={17} />{tx('textExtractionTitle')}</h3></div><button className="outline-button transcript-action" type="button" onClick={() => void startExtraction()} disabled={isExtracting}>{isExtracting ? <span className="button-spinner" /> : <FileText size={15} />}{isExtracting ? tx('extractingText') : tx('extractText')}</button></div><div className="transcript-controls"><label><span>{tx('subtitleTrack')}</span><select value={selectedTrackId} onChange={(event) => setSelectedTrackId(event.target.value)}><option value="">{tx('autoSelectTrack')}</option>{subtitleTracks.map((option) => <option key={option.id} value={option.id}>{option.language || option.label}{option.automatic ? ` · ${tx('automaticCaption')}` : ` · ${tx('manualSubtitle')}`}{option.ext ? ` · ${option.ext.toUpperCase()}` : ''}</option>)}</select></label><label><span>{tx('subtitleLanguage')}</span><select value={selectedLanguage} onChange={(event) => setSelectedLanguage(event.target.value)}><option value="">{tx('autoDetectLanguage')}</option>{languages.map((language) => <option key={language} value={language}>{language}</option>)}</select></label></div><p className="transcript-boundary">{subtitleTracks.length === 0 && <><strong>{tx('embeddedTrackAttempt')}</strong><br /></>}{tx('textTrackBoundary')}</p>{error && <p className="transcript-error">{error}</p>}{result && <div className="transcript-result"><div className="transcript-result-top"><span>{tx('extractedText')}</span><button className="text-button" type="button" onClick={() => void copyExtractedText()}><Copy size={14} />{copied ? tx('copied') : tx('copyText')}</button></div><div className="transcript-meta"><span>{tx('textSource')}: {sourceLabel}</span><span>{result.language || 'und'}</span><span>{result.cueCount ?? result.segments?.length ?? 0} {tx('cueUnit')}</span>{result.format && <span>{result.format.toUpperCase()}</span>}</div><p>{result.text}</p></div>}</section>;
 }
 
 function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOption; job: ParseJob; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
@@ -500,7 +527,7 @@ function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOpt
       const objectUrl = URL.createObjectURL(result.blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
-      anchor.download = result.filename || `${job.title || 'junvideo-media'}.${option.ext || (isAudio ? 'm4a' : isSubtitle ? 'vtt' : 'mp4')}`;
+      anchor.download = result.filename || `${job.title || 'junvideo-media'}.${option.ext || (isImage ? 'jpg' : isAudio ? 'm4a' : isSubtitle ? 'vtt' : 'mp4')}`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -511,7 +538,7 @@ function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOpt
       setIsDownloading(false);
     }
   }
-  return <div className="download-row"><div className={`download-icon ${isImage ? 'image' : isAudio ? 'audio' : isSubtitle ? 'subtitle' : 'video'}`}>{isImage ? <FileImage size={18} /> : isAudio ? <FileAudio size={18} /> : isSubtitle ? <FileText size={18} /> : <FileVideo size={18} />}</div><div className="download-copy"><strong>{isImage ? tx('coverImage') : option.label || (isAudio ? tx('audio') : isSubtitle ? tx('captions') : tx('video'))}</strong><span>{[option.ext?.toUpperCase(), option.quality, option.size].filter(Boolean).join(' · ') || tx('mediaStream')}</span></div><button className="download-link" type="button" onClick={() => void startDownload()} disabled={isDownloading} title={downloadError ? tx('refreshParse') : href}>{isDownloading ? <span className="button-spinner" /> : <><span>{downloadError ? tx('refreshParse') : tx('download')}</span>{downloadError ? <CircleHelp size={14} /> : <ExternalLink size={14} />}</>}</button></div>;
+  return <div className="download-row"><div className={`download-icon ${isImage ? 'image' : isAudio ? 'audio' : isSubtitle ? 'subtitle' : 'video'}`}>{isImage ? <FileImage size={18} /> : isAudio ? <FileAudio size={18} /> : isSubtitle ? <FileText size={18} /> : <FileVideo size={18} />}</div><div className="download-copy"><strong>{isImage ? option.imageIndex === undefined ? tx('coverImage') : `${tx('image')} ${option.imageIndex}` : option.label || (isAudio ? tx('audio') : isSubtitle ? tx('captions') : tx('video'))}</strong><span>{[option.ext?.toUpperCase(), option.quality, option.size].filter(Boolean).join(' · ') || tx('mediaStream')}</span></div><button className="download-link" type="button" onClick={() => void startDownload()} disabled={isDownloading} title={downloadError ? tx('refreshParse') : href}>{isDownloading ? <span className="button-spinner" /> : <><span>{downloadError ? tx('refreshParse') : tx('download')}</span>{downloadError ? <CircleHelp size={14} /> : <ExternalLink size={14} />}</>}</button></div>;
 }
 
 function StepCard({ number, icon, title, hint }: { number: string; icon: React.ReactNode; title: string; hint: string }) {
@@ -523,7 +550,7 @@ function PlatformBadge({ code, platformKey, label, tone }: { code: string; platf
 }
 
 function HistoryView({ items, isLoading, locale, tx, onPick }: { items: ParseJob[]; isLoading: boolean; locale: Locale; tx: (key: CopyKey) => string; onPick: (item: ParseJob) => void }) {
-  return <main className="subpage page-width"><div className="subpage-heading"><div><span className="eyebrow"><span className="eyebrow-dot" />04 / ARCHIVE</span><h1>{tx('navHistory')}</h1><p>{tx('emptyHistoryHint')}</p></div><button className="outline-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><Link2 size={16} />{tx('navWorkbench')}</button></div><div className="history-list">{isLoading ? <div className="loading-block"><span className="button-spinner" />{tx('systemChecking')}</div> : items.length === 0 ? <div className="history-empty"><HistoryIcon size={28} /><h2>{tx('emptyHistory')}</h2><p>{tx('emptyHistoryHint')}</p></div> : items.map((item) => <button className="history-row" key={item.id} onClick={() => onPick(item)}><div className="history-thumb">{item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" /> : <Play size={18} fill="currentColor" />}</div><div className="history-main"><strong>{item.title || item.sourceUrl}</strong><span>{friendlyPlatform(item.platform)} · {formatDate(item.createdAt, locale)}</span></div><span className={`history-status ${item.status}`}>{item.status === 'completed' ? <Check size={14} /> : item.status === 'failed' ? '!' : <span className="button-spinner" />}</span><ChevronRight size={18} /></button>)}</div></main>;
+  return <main className="subpage page-width"><div className="subpage-heading"><div><span className="eyebrow"><span className="eyebrow-dot" />04 / ARCHIVE</span><h1>{tx('navHistory')}</h1><p>{tx('emptyHistoryHint')}</p></div><button className="outline-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><Link2 size={16} />{tx('navWorkbench')}</button></div><div className="history-list">{isLoading ? <div className="loading-block"><span className="button-spinner" />{tx('systemChecking')}</div> : items.length === 0 ? <div className="history-empty"><HistoryIcon size={28} /><h2>{tx('emptyHistory')}</h2><p>{tx('emptyHistoryHint')}</p></div> : items.map((item) => <button className="history-row" key={item.id} onClick={() => onPick(item)}><div className="history-thumb">{item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" referrerPolicy="no-referrer" /> : <Play size={18} fill="currentColor" />}</div><div className="history-main"><strong>{item.title || item.sourceUrl}</strong><span>{friendlyPlatform(item.platform)} · {formatDate(item.createdAt, locale)}</span></div><span className={`history-status ${item.status}`}>{item.status === 'completed' ? <Check size={14} /> : item.status === 'failed' ? '!' : <span className="button-spinner" />}</span><ChevronRight size={18} /></button>)}</div></main>;
 }
 
 function VipView({ user, isVip, locale, tx, onActivate, onLogin, devVipEnabled }: { user: User | null; isVip: boolean; locale: Locale; tx: (key: CopyKey) => string; onActivate: () => void; onLogin: () => void; devVipEnabled: boolean }) {

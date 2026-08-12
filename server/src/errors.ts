@@ -72,23 +72,43 @@ export class ParserFailedError extends AppError {
   }
 }
 
-export class TranscriptionUnavailableError extends AppError {
-  public constructor(message: string, details?: ErrorDetails) {
-    super(503, "TRANSCRIPTION_UNAVAILABLE", message, {
-      action: "Install Python, ffmpeg, and openai-whisper on the API server, then retry.",
+export class TextTrackNotFoundError extends AppError {
+  public constructor(message = "No supported text subtitle track was found for this video.", details?: ErrorDetails) {
+    super(422, "TEXT_TRACK_NOT_FOUND", message, {
+      action: "Choose a manual or automatic text subtitle track. Audio-only speech and burned-in or bitmap subtitles require ASR/OCR and are not extracted.",
       details,
     });
-    this.name = "TranscriptionUnavailableError";
+    this.name = "TextTrackNotFoundError";
   }
 }
 
-export class TranscriptionFailedError extends AppError {
-  public constructor(message = "The video audio could not be transcribed.", details?: ErrorDetails) {
-    super(422, "TRANSCRIPTION_FAILED", message, {
-      action: "Check that the source contains audible speech and try again.",
+export class TextExtractionUnavailableError extends AppError {
+  public constructor(message: string, details?: ErrorDetails) {
+    super(503, "TEXT_EXTRACTION_UNAVAILABLE", message, {
+      action: "Install or configure yt-dlp so JunVideo can refresh the selected subtitle track.",
       details,
     });
-    this.name = "TranscriptionFailedError";
+    this.name = "TextExtractionUnavailableError";
+  }
+}
+
+export class TextExtractionFailedError extends AppError {
+  public constructor(message = "The selected subtitle track could not be converted to text.", details?: ErrorDetails) {
+    super(422, "TEXT_EXTRACTION_FAILED", message, {
+      action: "Select another text subtitle track or parse the source again to refresh its metadata.",
+      details,
+    });
+    this.name = "TextExtractionFailedError";
+  }
+}
+
+export class TextTrackTooLargeError extends AppError {
+  public constructor(maxBytes: number, actualBytes?: number) {
+    super(413, "TEXT_TRACK_TOO_LARGE", "The subtitle track exceeds the configured text-extraction limit.", {
+      action: "Select a smaller subtitle track.",
+      details: { maxBytes, ...(actualBytes === undefined ? {} : { actualBytes }) },
+    });
+    this.name = "TextTrackTooLargeError";
   }
 }
 

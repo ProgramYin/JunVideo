@@ -99,8 +99,25 @@ for (const item of cases) {
       failures.push({ name: item.name, stage: "parse", error: error?.message ?? "invalid input", details: parsed.body });
       continue;
     }
-    if (job.status === "succeeded" && ((job.videoFormats?.length ?? 0) === 0 || (job.audioFormats?.length ?? 0) === 0 || !job.thumbnailUrl)) {
-      failures.push({ name: item.name, stage: "parse", error: "succeeded without complete media categories" });
+    if (parsed.response.status !== 201 || job.status !== "succeeded") {
+      failures.push({
+        name: item.name,
+        stage: "parse",
+        error: error?.message ?? `parse did not succeed (HTTP ${parsed.response.status}, job ${job.status})`,
+        details: parsed.body,
+      });
+      continue;
+    }
+    const imageFormats = Array.isArray(job.imageFormats)
+      ? job.imageFormats
+      : Array.isArray(job.metadata?.imageFormats)
+        ? job.metadata.imageFormats
+        : [];
+    const downloadableMediaCount = (job.videoFormats?.length ?? 0)
+      + (job.audioFormats?.length ?? 0)
+      + imageFormats.length;
+    if (downloadableMediaCount === 0) {
+      failures.push({ name: item.name, stage: "parse", error: "succeeded without downloadable media" });
       continue;
     }
     if (job.sourceUrl !== item.value) {
@@ -116,25 +133,31 @@ for (const item of cases) {
       normalizedSourceUrl: job.sourceUrl,
       videoFormats: job.videoFormats?.length ?? 0,
       audioFormats: job.audioFormats?.length ?? 0,
+      imageFormats: imageFormats.length,
       coverAvailable: Boolean(job.thumbnailUrl),
       errorCode: error?.code ?? null,
       error: error?.message ?? null,
     });
-    if (job.status === "succeeded") {
-      const probeVideo = probeVideoFormat(job);
-      const selections = [
-        ...(probeVideo ? [["video", probeVideo.id]] : []),
-        ...(job.audioFormats?.[0] ? [["audio", job.audioFormats[0].id]] : []),
-        ...(job.thumbnailUrl ? [["image", "thumbnail"]] : []),
-      ];
-      for (const [kind, formatId] of selections) {
-        const media = await probeMedia(job, kind, formatId);
-        if (media.status !== 200 || media.probeBytes === 0) {
-          failures.push({ name: item.name, stage: `${kind} second phase`, error: media });
-          continue;
-        }
-        secondPhase.push({ name: item.name, ...media });
+    const probeVideo = probeVideoFormat(job);
+    const imageSelections = imageFormats.length > 0
+      ? [imageFormats[0], imageFormats.at(-1)]
+          .filter((format, index, values) => format?.id && values.findIndex((value) => value?.id === format.id) === index)
+          .map((format) => ["image", format.id])
+      : job.thumbnailUrl
+        ? [["image", "thumbnail"]]
+        : [];
+    const selections = [
+      ...(probeVideo ? [["video", probeVideo.id]] : []),
+      ...(job.audioFormats?.[0] ? [["audio", job.audioFormats[0].id]] : []),
+      ...imageSelections,
+    ];
+    for (const [kind, formatId] of selections) {
+      const media = await probeMedia(job, kind, formatId);
+      if (media.status !== 200 || media.probeBytes === 0) {
+        failures.push({ name: item.name, stage: `${kind} second phase`, error: media });
+        continue;
       }
+      secondPhase.push({ name: item.name, ...media });
     }
   } catch (error) {
     failures.push({

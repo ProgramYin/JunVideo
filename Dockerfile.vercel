@@ -16,11 +16,9 @@ ENV NODE_ENV=production \
     SERVE_CLIENT=true \
     PARSER_MODE=yt-dlp \
     YTDLP_PATH=/opt/junvideo-venv/bin/yt-dlp \
-    PYTHON_PATH=/opt/junvideo-venv/bin/python \
     FFMPEG_PATH=/usr/bin/ffmpeg \
-    XDG_CACHE_HOME=/opt/junvideo-models \
-    WHISPER_MODEL=tiny \
-    TRANSCRIPTION_ENABLED=true \
+    FFPROBE_PATH=/usr/bin/ffprobe \
+    TEXT_EXTRACTION_ENABLED=true \
     DEV_VIP_ENABLED=false
 
 RUN apt-get update \
@@ -29,17 +27,13 @@ RUN apt-get update \
     && python3 -m venv /opt/junvideo-venv
 
 WORKDIR /app
-COPY requirements-transcription.txt ./
 RUN /opt/junvideo-venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/junvideo-venv/bin/pip install --no-cache-dir "yt-dlp[default]==2026.7.4" -r requirements-transcription.txt \
-    && mkdir -p /opt/junvideo-models/whisper \
-    && /opt/junvideo-venv/bin/python -c "import whisper; whisper.load_model('tiny', download_root='/opt/junvideo-models/whisper')"
+    && /opt/junvideo-venv/bin/pip install --no-cache-dir "yt-dlp[default]==2026.7.4"
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY --from=build /app/dist ./dist
-COPY scripts/transcribe_audio.py ./scripts/transcribe_audio.py
 COPY database/schema.sql ./database/schema.sql
 
 USER node

@@ -1,7 +1,7 @@
 import { readdir, rm, stat, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { AppError } from "./errors.js";
+import { AppError, TextTrackTooLargeError } from "./errors.js";
 import { formatSelectorFor, type MediaFormat } from "./parser.js";
 import { runProcess } from "./process.js";
 import type { AppConfig } from "./config.js";
@@ -22,6 +22,11 @@ type YtDlpDownloadConfig = Pick<
   | "ytdlpFragmentRetries"
   | "ytdlpSocketTimeoutMs"
   | "ffmpegPath"
+>;
+
+type SubtitleDownloadConfig = YtDlpDownloadConfig & Pick<
+  AppConfig,
+  "ytdlpPath" | "textExtractionTimeoutMs" | "textExtractionMaxBytes"
 >;
 
 function downloadCommonArgs(appConfig: YtDlpDownloadConfig): string[] {
@@ -219,7 +224,7 @@ function subtitleContentType(extension: string): string {
 export async function downloadSubtitleWithYtDlp(
   sourceUrl: string,
   format: MediaFormat,
-  appConfig: AppConfig,
+  appConfig: SubtitleDownloadConfig,
 ): Promise<PreparedMediaFile> {
   const workDir = await mkdtemp(join(tmpdir(), "junvideo-subtitle-"));
   const outputTemplate = join(workDir, "subtitle.%(ext)s");
@@ -228,7 +233,7 @@ export async function downloadSubtitleWithYtDlp(
   try {
     let result;
     try {
-      result = await runProcess(appConfig.ytdlpPath, args, appConfig.mediaDownloadTimeoutMs, 4 * 1024 * 1024);
+      result = await runProcess(appConfig.ytdlpPath, args, appConfig.textExtractionTimeoutMs, 4 * 1024 * 1024);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/enoent|not found|cannot find/i.test(message)) {
@@ -253,6 +258,9 @@ export async function downloadSubtitleWithYtDlp(
       const filePath = join(workDir, file);
       const fileStat = await stat(filePath).catch(() => null);
       if (!fileStat?.isFile() || fileStat.size <= 0) continue;
+      if (fileStat.size > appConfig.textExtractionMaxBytes) {
+        throw new TextTrackTooLargeError(appConfig.textExtractionMaxBytes, fileStat.size);
+      }
       const extension = file.split(".").pop()?.toLowerCase() || format.ext || "vtt";
       return { filePath, workDir, contentType: subtitleContentType(extension), extension };
     }

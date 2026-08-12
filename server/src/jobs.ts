@@ -41,6 +41,7 @@ export interface ParseJobView {
   durationSeconds: number | null;
   videoFormats: MediaFormat[];
   audioFormats: MediaFormat[];
+  imageFormats: MediaFormat[];
   subtitleFormats: MediaFormat[];
   metadata: Record<string, unknown>;
   error: { code: string; message: string; action?: string } | null;
@@ -109,6 +110,7 @@ export function toParseJobView(row: ParseJobRow): ParseJobView {
     durationSeconds: row.duration_seconds,
     videoFormats: arrayValue<MediaFormat>(row.video_formats),
     audioFormats: arrayValue<MediaFormat>(row.audio_formats),
+    imageFormats: arrayValue<MediaFormat>(metadata.imageFormats),
     subtitleFormats: arrayValue<MediaFormat>(metadata.subtitleFormats),
     metadata,
     error,
@@ -132,7 +134,10 @@ export function safeDownloadFilename(title: string | null, kind: "video" | "audi
     .replace(/[. ]+$/g, "")
     .trim()
     .slice(0, 150);
-  const base = cleaned || fallback;
+  const imageSuffix = kind === "image" && format.id !== "thumbnail"
+    ? `-${format.id.replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 40)}`
+    : "";
+  const base = `${cleaned || fallback}${imageSuffix}`;
   return `${base}.${formatExtension(format, kind === "video" ? "mp4" : kind === "audio" ? "m4a" : kind === "subtitle" ? "vtt" : "jpg")}`;
 }
 
@@ -178,10 +183,19 @@ export function selectMediaFormat(
   requestedId?: string,
 ): MediaFormat {
   if (kind === "image") {
-    if (requestedId && requestedId !== "thumbnail") {
-      throw new AppError(404, "FORMAT_NOT_FOUND", "No image format is available for this parse job.");
+    const images = arrayValue<MediaFormat>(objectValue(row.metadata).imageFormats);
+    const format = requestedId === "thumbnail"
+      ? images[0] ?? thumbnailFormat(row)
+      : requestedId
+        ? images.find((candidate) => candidate.id === requestedId)
+        : images[0] ?? thumbnailFormat(row);
+    if (!format) throw new AppError(404, "FORMAT_NOT_FOUND", "No image format is available for this parse job.");
+    if (!isSafeRemoteHttpUrl(format.url)) {
+      throw new AppError(502, "UNSAFE_MEDIA_URL", "The parser returned a media URL that cannot be proxied safely.", {
+        action: "Run the parse again or choose another format.",
+      });
     }
-    return thumbnailFormat(row);
+    return format;
   }
   const formats = kind === "subtitle"
     ? [...arrayValue<MediaFormat>(objectValue(row.metadata).allSubtitleFormats)]
@@ -201,6 +215,39 @@ export function selectMediaFormat(
     });
   }
   return format;
+}
+
+/**
+ * Returns every persisted text-track candidate, including alternative file
+ * representations that are intentionally hidden from the compact UI list.
+ * Older rows may only contain subtitleFormats, so keep that as a migration-free
+ * fallback. The extractor performs final format support/ranking checks.
+ */
+export function subtitleFormatsForExtraction(row: ParseJobRow): MediaFormat[] {
+  const metadata = objectValue(row.metadata);
+  const remembered = arrayValue<MediaFormat>(metadata.allSubtitleFormats);
+  const displayed = arrayValue<MediaFormat>(metadata.subtitleFormats);
+  const source = remembered.length > 0 ? remembered : displayed;
+  const seen = new Set<string>();
+  return source.filter((format) => {
+    if (!format || format.mediaType !== "subtitle" || !format.id || !format.language) return false;
+    if (!isSafeRemoteHttpUrl(format.url) || seen.has(format.id)) return false;
+    seen.add(format.id);
+    return true;
+  });
+}
+
+/** Includes remembered non-displayed video formats for embedded-text probing. */
+export function videoFormatsForTextInspection(row: ParseJobRow): MediaFormat[] {
+  const displayed = arrayValue<MediaFormat>(row.video_formats);
+  const remembered = arrayValue<MediaFormat>(objectValue(row.metadata).allVideoFormats);
+  const seen = new Set<string>();
+  return [...displayed, ...remembered].filter((format) => {
+    if (!format || !format.id || !format.hasVideo || seen.has(format.id)) return false;
+    if (!isSafeRemoteHttpUrl(format.url)) return false;
+    seen.add(format.id);
+    return true;
+  });
 }
 
 export function parseResultToColumns(result: ParseResult): {
@@ -225,6 +272,7 @@ export function parseResultToColumns(result: ParseResult): {
       ...result.metadata,
       subtitleFormats: result.subtitleFormats,
       allSubtitleFormats: result.metadata.allSubtitleFormats ?? result.subtitleFormats,
+      imageFormats: result.imageFormats,
       mock: result.mock,
     },
   };

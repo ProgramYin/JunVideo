@@ -12,13 +12,12 @@
     "start": "node dist/server/src/index.js",
     "db:init": "node scripts/init-db.mjs",
     "setup:ytdlp": "node scripts/setup-ytdlp.mjs",
-    "setup:transcription": "node scripts/setup-transcription.mjs",
     "setup:xhs": "node scripts/setup-xhs-downloader.mjs",
     "smoke": "node scripts/backend-smoke.mjs",
     "smoke:production": "npm run build && node scripts/production-smoke.mjs",
     "smoke:priority": "node scripts/priority-three-round-smoke.mjs",
     "smoke:cases": "node scripts/test-cases-smoke.mjs",
-    "test": "npm run build:api && node --test dist/server/src/platform.test.js dist/server/src/usage.test.js dist/server/src/jobs.test.js dist/server/src/jobs-remembered.test.js dist/server/src/routes.test.js dist/server/src/xhs-downloader.test.js dist/server/src/parser.test.js dist/server/src/validation.test.js dist/server/src/transcription.test.js dist/server/src/media-download.test.js"
+    "test": "npm run build:api && node --test dist/server/src/platform.test.js dist/server/src/usage.test.js dist/server/src/jobs.test.js dist/server/src/jobs-remembered.test.js dist/server/src/routes.test.js dist/server/src/xhs-downloader.test.js dist/server/src/parser.test.js dist/server/src/validation.test.js dist/server/src/subtitle-text.test.js dist/server/src/embedded-subtitle.test.js dist/server/src/text-extraction.test.js dist/server/src/media-download.test.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

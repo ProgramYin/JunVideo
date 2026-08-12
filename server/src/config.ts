@@ -22,16 +22,13 @@ const envSchema = z.object({
   YTDLP_SOCKET_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
   YTDLP_COOKIES_FILE: z.string().optional(),
   YTDLP_COOKIES_FROM_BROWSER: z.string().optional(),
-  PYTHON_PATH: z.string().optional(),
+  TEXT_EXTRACTION_ENABLED: z.enum(["true", "false"]).default("true"),
+  TEXT_EXTRACTION_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(120_000).default(30_000),
+  TEXT_EXTRACTION_MAX_BYTES: z.coerce.number().int().min(65_536).max(16 * 1024 * 1024).default(8 * 1024 * 1024),
+  TEXT_EXTRACTION_MAX_CUES: z.coerce.number().int().min(1).max(100_000).default(20_000),
+  TEXT_EXTRACTION_MAX_CHARS: z.coerce.number().int().min(1_000).max(10_000_000).default(2_000_000),
   FFMPEG_PATH: z.string().optional(),
-  WHISPER_MODEL: z.string().trim().min(1).max(40).default("tiny"),
-  TRANSCRIPTION_ENABLED: z.enum(["true", "false"]).default("true"),
-  TRANSCRIPTION_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(60 * 60 * 1000).default(15 * 60 * 1000),
-  TRANSCRIPTION_MAX_BYTES: z.coerce.number().int().min(1_048_576).max(2 * 1024 * 1024 * 1024).default(512 * 1024 * 1024),
-  CORRECTION_MODE: z.enum(["rules", "openai", "none"]).default("rules"),
-  OPENAI_API_KEY: z.string().optional(),
-  OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
-  OPENAI_CORRECTION_MODEL: z.string().trim().min(1).max(100).default("gpt-4o-mini"),
+  FFPROBE_PATH: z.string().optional(),
   DOUYIN_BROWSER_FALLBACK: z.enum(["true", "false"]).default("true"),
   JUNVIDEO_BROWSER_PATH: z.string().optional(),
   BROWSER_FALLBACK_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(120_000).default(35_000),
@@ -70,9 +67,8 @@ const devVipEnabled = parsedEnv.DEV_VIP_ENABLED
 const serveClient = parsedEnv.SERVE_CLIENT ? parsedEnv.SERVE_CLIENT === "true" : isProduction;
 const ytdlpCookiesFile = parsedEnv.YTDLP_COOKIES_FILE?.trim() || undefined;
 const ytdlpCookiesFromBrowser = parsedEnv.YTDLP_COOKIES_FROM_BROWSER?.trim() || undefined;
-const pythonPath = parsedEnv.PYTHON_PATH?.trim() || "python";
 const ffmpegPath = parsedEnv.FFMPEG_PATH?.trim() || "ffmpeg";
-const openAiApiKey = parsedEnv.OPENAI_API_KEY?.trim() || undefined;
+const ffprobePath = parsedEnv.FFPROBE_PATH?.trim() || "ffprobe";
 const xhsDownloaderApiUrl = parsedEnv.XHS_DOWNLOADER_API_URL?.trim() || undefined;
 const xhsDownloaderCookie = parsedEnv.XHS_DOWNLOADER_COOKIE?.trim() || undefined;
 const xhsDownloaderProxy = parsedEnv.XHS_DOWNLOADER_PROXY?.trim() || undefined;
@@ -119,16 +115,13 @@ export const config = {
   ytdlpSocketTimeoutMs: parsedEnv.YTDLP_SOCKET_TIMEOUT_MS,
   ytdlpCookiesFile,
   ytdlpCookiesFromBrowser,
-  pythonPath,
+  textExtractionEnabled: parsedEnv.TEXT_EXTRACTION_ENABLED === "true",
+  textExtractionTimeoutMs: parsedEnv.TEXT_EXTRACTION_TIMEOUT_MS,
+  textExtractionMaxBytes: parsedEnv.TEXT_EXTRACTION_MAX_BYTES,
+  textExtractionMaxCues: parsedEnv.TEXT_EXTRACTION_MAX_CUES,
+  textExtractionMaxChars: parsedEnv.TEXT_EXTRACTION_MAX_CHARS,
   ffmpegPath,
-  whisperModel: parsedEnv.WHISPER_MODEL,
-  transcriptionEnabled: parsedEnv.TRANSCRIPTION_ENABLED === "true",
-  transcriptionTimeoutMs: parsedEnv.TRANSCRIPTION_TIMEOUT_MS,
-  transcriptionMaxBytes: parsedEnv.TRANSCRIPTION_MAX_BYTES,
-  correctionMode: parsedEnv.CORRECTION_MODE,
-  openAiApiKey,
-  openAiBaseUrl: parsedEnv.OPENAI_BASE_URL.replace(/\/+$/u, ""),
-  openAiCorrectionModel: parsedEnv.OPENAI_CORRECTION_MODEL,
+  ffprobePath,
   douyinBrowserFallback: parsedEnv.DOUYIN_BROWSER_FALLBACK === "true",
   browserExecutablePath: parsedEnv.JUNVIDEO_BROWSER_PATH?.trim() || undefined,
   browserFallbackTimeoutMs: parsedEnv.BROWSER_FALLBACK_TIMEOUT_MS,

@@ -5,12 +5,15 @@ import { config } from "./config.js";
 import { findUserByEmail, sendAuthResponse, toPublicUser, verifyPassword, createUser, requireAuth, authenticatedUser } from "./auth.js";
 import { checkDatabase, pool, query, withTransaction } from "./db.js";
 import { AppError, QuotaExceededError, asAppError } from "./errors.js";
+import { EmbeddedSubtitleService } from "./embedded-subtitle.js";
 import { asyncHandler } from "./http.js";
 import {
   parseResultToColumns,
   safeDownloadFilename,
   selectMediaFormat,
+  subtitleFormatsForExtraction,
   toParseJobView,
+  videoFormatsForTextInspection,
   type ParseJobRow,
 } from "./jobs.js";
 import { ParserService, parseRequestFromPreflight } from "./parser.js";
@@ -22,7 +25,8 @@ import {
   type PreparedMediaFile,
 } from "./media-download.js";
 import { extractUrlFromText, isSafeRemoteHttpUrl, platformCatalog, preflightUrl } from "./platform.js";
-import { TranscriptService } from "./transcription.js";
+import { SubtitleTextService } from "./subtitle-text.js";
+import { extractVideoText } from "./text-extraction.js";
 import { getUsageSnapshot, reserveParseAttempt } from "./usage.js";
 import {
   credentialsSchema,
@@ -30,7 +34,7 @@ import {
   positiveLimit,
   rawInputFromBody,
   registrationSchema,
-  transcriptionBodySchema,
+  textExtractionBodySchema,
   uuidSchema,
 } from "./validation.js";
 
@@ -269,7 +273,11 @@ export function isTransientMediaStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-export function createApiRouter(parser = new ParserService(), transcriptService = new TranscriptService()): Router {
+export function createApiRouter(
+  parser = new ParserService(),
+  subtitleTextService = new SubtitleTextService(config),
+  embeddedSubtitleService = new EmbeddedSubtitleService(config),
+): Router {
   const router = Router();
 
   const healthHandler = asyncHandler(async (_request, response) => {
@@ -288,7 +296,8 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
         : { status: "down", message: "Database unavailable." },
       parser: parserStatus,
       features: {
-        transcription: config.transcriptionEnabled,
+        textExtraction: config.textExtractionEnabled,
+        transcription: false,
         devVip: config.devVipEnabled,
         subtitles: true,
       },
@@ -395,26 +404,27 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
     }
   }));
 
-  router.post("/transcribe/:jobId", requireAuth, asyncHandler(async (request, response) => {
+  const extractTextHandler = asyncHandler(async (request, response) => {
     const user = authenticatedUser(request);
     const job = await findOwnedJob(jobIdFromRequest(request), user.id);
     if (job.status !== "succeeded") {
-      throw new AppError(409, "PARSE_JOB_NOT_READY", "Parse the video successfully before transcribing it.");
+      throw new AppError(409, "PARSE_JOB_NOT_READY", "Parse the source successfully before extracting subtitle text.");
     }
-
-    let format;
-    try {
-      format = selectMediaFormat(job, "audio");
-    } catch {
-      format = selectMediaFormat(job, "video");
-    }
-    if (!format.hasAudio) {
-      throw new AppError(422, "AUDIO_STREAM_NOT_FOUND", "The parsed result does not contain an audio stream for transcription.");
-    }
-    const options = parseBody(transcriptionBodySchema, request.body ?? {});
-    const transcript = await transcriptService.transcribeFormat(format, options, job.canonical_url);
+    const options = parseBody(textExtractionBodySchema, request.body ?? {});
+    const formats = subtitleFormatsForExtraction(job);
+    const transcript = await extractVideoText({
+      sourceUrl: job.canonical_url,
+      subtitleFormats: formats,
+      videoFormats: videoFormatsForTextInspection(job),
+      options,
+    }, subtitleTextService, embeddedSubtitleService);
     response.status(200).json({ transcript });
-  }));
+  });
+
+  router.post("/extract-text/:jobId", requireAuth, extractTextHandler);
+  // Backward-compatible route name; behavior and validation are identical and
+  // never invoke audio extraction, ASR, Python, or an external AI service.
+  router.post("/transcribe/:jobId", requireAuth, extractTextHandler);
 
   router.get("/history", requireAuth, asyncHandler(async (request, response) => {
     const user = authenticatedUser(request);

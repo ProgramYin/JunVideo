@@ -1,4 +1,4 @@
-import type { ApiHealth, Locale, ParseJob, TranscriptResult, Usage, User } from './types';
+import type { ApiHealth, ExtractedTextResult, Locale, ParseJob, Usage, User } from './types';
 
 const configuredApiBase = String(import.meta.env.VITE_API_BASE_URL ?? '').trim();
 const API_BASE = configuredApiBase ? configuredApiBase.replace(/\/+$/u, '') : '/api';
@@ -109,19 +109,28 @@ function normalizeJob(payload: unknown): ParseJob {
     : Array.isArray(metadata.subtitleFormats)
       ? metadata.subtitleFormats
       : [];
+  const rawImageFormats = Array.isArray(raw.imageFormats) && raw.imageFormats.length > 0
+    ? raw.imageFormats
+    : Array.isArray(metadata.imageFormats)
+      ? metadata.imageFormats
+      : [];
+  const imageFormats = rawImageFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)));
   const thumbnailUrl = raw.thumbnailUrl == null && raw.thumbnail_url == null
     ? null
     : String(raw.thumbnailUrl ?? raw.thumbnail_url);
-  const toOption = (format: Record<string, unknown>, type: 'video' | 'audio' | 'subtitle') => ({
-    id: String(format.id ?? `${type}-${Math.random().toString(36).slice(2)}`),
-    label: String(format.qualityLabel ?? (typeof format.height === 'number' && format.height > 0
-      ? `${format.height}p`
-      : type === 'video'
+  const toOption = (format: Record<string, unknown>, type: 'video' | 'audio' | 'subtitle' | 'image', index: number) => ({
+    id: String(format.id ?? `${type}-${index + 1}`),
+    label: String(format.qualityLabel ?? (type === 'image'
+      ? `Image ${index + 1}`
+      : typeof format.height === 'number' && format.height > 0
+        ? `${format.height}p`
+        : type === 'video'
         ? 'Video'
         : type === 'audio'
           ? 'Audio'
           : String(format.language ?? 'Subtitle'))),
     type,
+    ...(type === 'image' ? { imageIndex: index + 1 } : {}),
     ext: format.ext ? String(format.ext) : undefined,
     quality: format.qualityLabel
       ? String(format.qualityLabel)
@@ -131,6 +140,8 @@ function normalizeJob(payload: unknown): ParseJob {
           ? `${Math.round(format.bitrateKbps)} kbps`
           : undefined,
     size: formatBytes(format.filesize),
+    ...(type === 'subtitle' && format.language ? { language: String(format.language) } : {}),
+    ...(type === 'subtitle' ? { automatic: format.automatic === true } : {}),
     url: format.url ? String(format.url) : undefined,
   });
   const error = raw.error as Record<string, unknown> | null | undefined;
@@ -152,10 +163,11 @@ function normalizeJob(payload: unknown): ParseJob {
     errorMessage: error?.message ? String(error.message) : raw.errorMessage ? String(raw.errorMessage) : null,
     metadata,
     options: [
-      ...videoFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value) => toOption(value, 'video')),
-      ...audioFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value) => toOption(value, 'audio')),
-      ...subtitleFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value) => toOption(value, 'subtitle')),
-      ...(thumbnailUrl ? [{
+      ...videoFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value, index) => toOption(value, 'video', index)),
+      ...audioFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value, index) => toOption(value, 'audio', index)),
+      ...subtitleFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value, index) => toOption(value, 'subtitle', index)),
+      ...imageFormats.map((value, index) => toOption(value, 'image', index)),
+      ...(imageFormats.length === 0 && thumbnailUrl ? [{
         id: 'thumbnail',
         label: 'Cover image',
         type: 'image' as const,
@@ -211,12 +223,14 @@ export async function parseUrl(url: string) {
   }
 }
 
-export async function transcribeVideo(job: ParseJob, options: { language?: string; model?: string } = {}) {
-  const payload = await request<{ transcript: TranscriptResult }>(`/transcribe/${encodeURIComponent(job.id)}`, {
+export async function extractVideoText(job: ParseJob, options: { trackId?: string; language?: string } = {}) {
+  const payload = await request<{ transcript?: ExtractedTextResult; text?: ExtractedTextResult }>(`/extract-text/${encodeURIComponent(job.id)}`, {
     method: 'POST',
     body: JSON.stringify(options),
   });
-  return payload.transcript;
+  const result = payload.transcript ?? payload.text;
+  if (!result) throw new ApiError('The subtitle text extraction response is invalid.', 502, 'INVALID_TEXT_EXTRACTION_RESPONSE', payload);
+  return { ...result, text: result.text ?? result.correctedText ?? result.rawText ?? '' };
 }
 
 export async function history() {
@@ -248,6 +262,7 @@ export async function health() {
       extractorCount: typeof parser.extractorCount === 'number' ? parser.extractorCount : null,
     } : undefined,
     features: payload.features && typeof payload.features === 'object' ? {
+      textExtraction: Boolean((payload.features as Record<string, unknown>).textExtraction ?? (payload.features as Record<string, unknown>).subtitles),
       transcription: Boolean((payload.features as Record<string, unknown>).transcription),
       devVip: Boolean((payload.features as Record<string, unknown>).devVip),
       subtitles: Boolean((payload.features as Record<string, unknown>).subtitles),

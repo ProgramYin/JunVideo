@@ -72,6 +72,11 @@ for (let round = 1; round <= rounds; round += 1) {
       .map((format) => format?.qualityLabel)
       .filter((value) => typeof value === "string");
     const displayVideoFormats = job?.videoFormats ?? [];
+    const imageFormats = Array.isArray(job?.imageFormats)
+      ? job.imageFormats
+      : Array.isArray(job?.metadata?.imageFormats)
+        ? job.metadata.imageFormats
+        : [];
     const displayHeights = displayVideoFormats
       .map((format) => format?.height)
       .filter((value) => typeof value === "number");
@@ -93,23 +98,40 @@ for (let round = 1; round <= rounds; round += 1) {
       videoFormats: displayVideoFormats.length,
       allVideoFormats: allVideoFormatCount,
       audioFormats: job?.audioFormats?.length ?? 0,
+      imageFormats: imageFormats.length,
       coverAvailable: Boolean(job?.thumbnailUrl),
       qualityLabels: qualityLabels.slice(0, 8),
       note: "metadata/formats only; no media body requested in phase one",
       error: parsed.body?.error?.message ?? null,
     });
 
-    if (parsed.response.status !== 201 || !job || job.status !== "succeeded") continue;
+    if (parsed.response.status !== 201 || !job || job.status !== "succeeded") {
+      throw new Error(`${source.name} parse failed (HTTP ${parsed.response.status}, job ${job?.status ?? "missing"}): ${parsed.body?.error?.message ?? job?.error?.message ?? "unknown error"}`);
+    }
+    if (displayVideoFormats.length + (job.audioFormats?.length ?? 0) + imageFormats.length === 0) {
+      throw new Error(`${source.name} succeeded without downloadable media`);
+    }
+    const imageSelections = imageFormats.length > 0
+      ? [imageFormats[0], imageFormats.at(-1)]
+          .filter((format, index, values) => format?.id && values.findIndex((value) => value?.id === format.id) === index)
+          .map((format) => ({ kind: "image", id: format.id }))
+      : job.thumbnailUrl
+        ? [{ kind: "image", id: "thumbnail" }]
+        : [];
     const selections = [
       ...(job.videoFormats?.[0] ? [{ kind: "video", id: job.videoFormats[0].id }] : []),
       ...(job.audioFormats?.[0] ? [{ kind: "audio", id: job.audioFormats[0].id }] : []),
-      ...(job.thumbnailUrl ? [{ kind: "image", id: "thumbnail" }] : []),
+      ...imageSelections,
     ];
     for (const selection of selections) {
+      const media = await probeMedia(token, job, selection.kind, selection.id);
+      if (media.status !== 200 || media.probeBytes === 0) {
+        throw new Error(`${source.name} ${selection.kind}/${selection.id} probe failed: ${JSON.stringify(media)}`);
+      }
       roundReport.secondPhase.push({
         source: source.name,
         kind: selection.kind,
-        ...(await probeMedia(token, job, selection.kind, selection.id)),
+        ...media,
       });
     }
   }

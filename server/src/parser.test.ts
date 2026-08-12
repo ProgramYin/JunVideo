@@ -68,6 +68,7 @@ test("yt-dlp metadata arguments use HTTP timeouts without automatic retries", ()
     "--fragment-retries", "0",
     "--socket-timeout", "16",
   ]);
+  assert.ok(args.includes("--ignore-no-formats-error"));
   assert.deepEqual(args.slice(-4), ["--dump-single-json", "--skip-download", "--", "https://www.bilibili.com/video/BV1test"]);
 });
 
@@ -191,6 +192,81 @@ test("browser fallback formats stay on their fresh direct media URLs", () => {
   assert.equal(result.videoFormats[0]?.downloadMode, "direct");
 });
 
+test("Xiaohongshu prefers the official default cover over the low-quality preview", () => {
+  const result = parseYtDlpInfo({
+    title: "Xiaohongshu cover",
+    thumbnail: "http://sns-webpic-qc.xhscdn.com/image!nd_prv_wlteh_jpg_3",
+    thumbnails: [
+      {
+        id: "1",
+        url: "http://sns-webpic-qc.xhscdn.com/image!nd_prv_wlteh_jpg_3",
+        width: 1080,
+        height: 1440,
+      },
+      {
+        id: "0",
+        url: "http://sns-webpic-qc.xhscdn.com/image!nd_dft_wlteh_jpg_3",
+        width: 1080,
+        height: 1440,
+      },
+    ],
+    formats: [{
+      format_id: "0",
+      url: "https://sns-video-v2.xhscdn.com/video.mp4",
+      ext: "mp4",
+      vcodec: "h264",
+      acodec: "aac",
+      width: 720,
+      height: 1280,
+    }],
+  }, {
+    sourceUrl: "https://www.xiaohongshu.com/discovery/item/note-test",
+    canonicalUrl: "https://www.xiaohongshu.com/discovery/item/note-test",
+    platform: { id: "xiaohongshu", label: "Xiaohongshu", hostname: "xiaohongshu.com", recognized: true },
+  });
+
+  assert.equal(
+    result.thumbnailUrl,
+    "https://sns-webpic-qc.xhscdn.com/image!nd_dft_wlteh_jpg_3",
+  );
+});
+
+test("Xiaohongshu image notes normalize a complete default-quality gallery", () => {
+  const result = parseYtDlpInfo({
+    title: "Xiaohongshu gallery",
+    formats: [],
+    thumbnails: [
+      { id: "preview-2", url: "http://sns-webpic-qc.xhscdn.com/assets/gallery-2!nd_prv_wlteh_jpg_3", width: 1080, height: 1443 },
+      { id: "default-2", url: "http://sns-webpic-qc.xhscdn.com/assets/gallery-2!nd_dft_wlteh_jpg_3", width: 1080, height: 1443 },
+      { id: "preview-1", url: "http://sns-webpic-qc.xhscdn.com/assets/gallery-1!nd_prv_wlteh_jpg_3", width: 1080, height: 1443 },
+      { id: "default-1", url: "http://sns-webpic-qc.xhscdn.com/assets/gallery-1!nd_dft_wlteh_jpg_3", width: 1080, height: 1443 },
+    ],
+  }, {
+    sourceUrl: "https://www.xiaohongshu.com/discovery/item/gallery-test",
+    canonicalUrl: "https://www.xiaohongshu.com/discovery/item/gallery-test",
+    platform: { id: "xiaohongshu", label: "Xiaohongshu", hostname: "xiaohongshu.com", recognized: true },
+  });
+
+  assert.equal(result.videoFormats.length, 0);
+  assert.equal(result.audioFormats.length, 0);
+  assert.deepEqual(result.imageFormats.map((format) => format.id), ["image-1", "image-2"]);
+  assert.deepEqual(result.imageFormats.map((format) => format.url), [
+    "https://sns-webpic-qc.xhscdn.com/assets/gallery-1!nd_dft_wlteh_jpg_3",
+    "https://sns-webpic-qc.xhscdn.com/assets/gallery-2!nd_dft_wlteh_jpg_3",
+  ]);
+  assert.equal(result.thumbnailUrl, result.imageFormats[0]?.url);
+  assert.equal(result.imageFormats[0]?.mediaType, "image");
+  assert.equal(result.metadata.imageFormatCount, 2);
+});
+
+test("Xiaohongshu metadata with no media still fails", () => {
+  assert.throws(() => parseYtDlpInfo({ title: "Empty note", formats: [], thumbnails: [] }, {
+    sourceUrl: "https://www.xiaohongshu.com/discovery/item/empty-test",
+    canonicalUrl: "https://www.xiaohongshu.com/discovery/item/empty-test",
+    platform: { id: "xiaohongshu", label: "Xiaohongshu", hostname: "xiaohongshu.com", recognized: true },
+  }), /no downloadable video, audio, or image formats/i);
+});
+
 test("yt-dlp subtitles prefer manual tracks and retain automatic captions", () => {
   const result = parseYtDlpInfo({
     title: "Captioned video",
@@ -215,11 +291,38 @@ test("yt-dlp subtitles prefer manual tracks and retain automatic captions", () =
     platform: { id: "youtube", label: "YouTube", hostname: "youtube.com", recognized: true },
   });
 
-  assert.equal(result.subtitleFormats.length, 2);
+  assert.equal(result.subtitleFormats.length, 3);
   assert.equal(result.subtitleFormats[0]?.language, "en");
   assert.equal(result.subtitleFormats[0]?.ext, "vtt");
   assert.equal(result.subtitleFormats[0]?.automatic, false);
-  assert.equal(result.subtitleFormats[1]?.language, "zh-Hans");
+  assert.equal(result.subtitleFormats[1]?.language, "en");
   assert.equal(result.subtitleFormats[1]?.automatic, true);
-  assert.equal(result.metadata.subtitleFormatCount, 2);
+  assert.equal(result.subtitleFormats[2]?.language, "zh-Hans");
+  assert.equal(result.subtitleFormats[2]?.automatic, true);
+  assert.equal(result.metadata.subtitleFormatCount, 4);
+  assert.equal((result.metadata.allSubtitleFormats as MediaFormat[]).length, 4);
+});
+
+test("yt-dlp live chat is not exposed as extractable video text", () => {
+  const result = parseYtDlpInfo({
+    title: "Archived stream",
+    formats: [{
+      format_id: "18",
+      url: "https://cdn.example.com/video.mp4",
+      ext: "mp4",
+      vcodec: "h264",
+      acodec: "aac",
+    }],
+    subtitles: {
+      live_chat: [{ ext: "json3", url: "https://cdn.example.com/chat.json3" }],
+      en: [{ ext: "vtt", url: "https://cdn.example.com/en.vtt" }],
+    },
+  }, {
+    sourceUrl: "https://www.youtube.com/watch?v=stream",
+    canonicalUrl: "https://www.youtube.com/watch?v=stream",
+    platform: { id: "youtube", label: "YouTube", hostname: "youtube.com", recognized: true },
+  });
+
+  assert.deepEqual(result.subtitleFormats.map((format) => format.language), ["en"]);
+  assert.equal(result.metadata.subtitleFormatCount, 1);
 });

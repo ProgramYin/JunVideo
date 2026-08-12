@@ -84,3 +84,40 @@ test("yt-dlp subtitle args refresh the selected automatic caption language", () 
   assert.equal(args[args.indexOf("--sub-langs") + 1], "zh-Hans");
   assert.equal(args[args.indexOf("--sub-format") + 1], "vtt/best");
 });
+
+test("yt-dlp subtitle args never request audio, video, ASR, or subtitle conversion", () => {
+  const subtitle: MediaFormat = {
+    ...separatedVideo,
+    id: "subtitle-manual-en-0",
+    url: "https://cdn.example.com/caption.srt",
+    ext: "srt",
+    mimeType: "text/plain",
+    width: null,
+    height: null,
+    fps: null,
+    bitrateKbps: null,
+    videoCodec: null,
+    audioCodec: null,
+    hasVideo: false,
+    hasAudio: false,
+    requiresMuxing: false,
+    mediaType: "subtitle",
+    language: "en",
+    automatic: false,
+  };
+  const args = buildYtDlpSubtitleArgs("https://example.com/watch/1", subtitle, "subtitle.%(ext)s", {
+    ytdlpCookiesFile: undefined,
+    ytdlpCookiesFromBrowser: undefined,
+    ytdlpRetries: 0,
+    ytdlpExtractorRetries: 0,
+    ytdlpFragmentRetries: 0,
+    ytdlpSocketTimeoutMs: 15_000,
+    ffmpegPath: "ffmpeg",
+  });
+
+  assert.ok(args.includes("--skip-download"));
+  assert.ok(args.includes("--write-subs"));
+  assert.equal(args.includes("--extract-audio"), false);
+  assert.equal(args.includes("--write-auto-subs"), false);
+  assert.equal(args.includes("--convert-subs"), false);
+});

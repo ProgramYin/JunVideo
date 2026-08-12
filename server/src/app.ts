@@ -6,11 +6,13 @@ import { errorHandler, notFoundHandler } from "./errors.js";
 import { corsMiddleware, requestIdMiddleware, setSecurityHeaders } from "./http.js";
 import { ParserService } from "./parser.js";
 import { createApiRouter } from "./routes.js";
-import { TranscriptService } from "./transcription.js";
+import { SubtitleTextService } from "./subtitle-text.js";
+import { EmbeddedSubtitleService } from "./embedded-subtitle.js";
 
 export interface AppDependencies {
   parser?: ParserService;
-  transcriptService?: TranscriptService;
+  subtitleTextService?: SubtitleTextService;
+  embeddedSubtitleService?: EmbeddedSubtitleService;
 }
 
 export function createApp(dependencies: AppDependencies = {}): Express {
@@ -24,7 +26,11 @@ export function createApp(dependencies: AppDependencies = {}): Express {
   app.use(express.json({ limit: "64kb", strict: true }));
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 
-  app.use("/api", createApiRouter(dependencies.parser ?? new ParserService(), dependencies.transcriptService ?? new TranscriptService()));
+  app.use("/api", createApiRouter(
+    dependencies.parser ?? new ParserService(),
+    dependencies.subtitleTextService ?? new SubtitleTextService(config),
+    dependencies.embeddedSubtitleService ?? new EmbeddedSubtitleService(config),
+  ));
 
   const clientDist = join(process.cwd(), "dist", "client");
   const clientIndex = join(clientDist, "index.html");

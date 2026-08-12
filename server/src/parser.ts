@@ -44,7 +44,7 @@ export interface MediaFormat {
    */
   audioFormatId?: string | null;
   /** Distinguishes downloadable captions from ordinary A/V streams. */
-  mediaType?: "video" | "audio" | "subtitle";
+  mediaType?: "video" | "audio" | "image" | "subtitle";
   /** yt-dlp subtitle language key, retained for a fresh subtitle download. */
   language?: string | null;
   /** True when the subtitle track came from automatic_captions. */
@@ -63,6 +63,7 @@ export interface ParseResult {
   durationSeconds: number | null;
   videoFormats: MediaFormat[];
   audioFormats: MediaFormat[];
+  imageFormats: MediaFormat[];
   subtitleFormats: MediaFormat[];
   metadata: Record<string, unknown>;
   mock: boolean;
@@ -107,7 +108,7 @@ export function buildYtDlpArgs(
   ];
   if (appConfig.ytdlpCookiesFile) args.push("--cookies", appConfig.ytdlpCookiesFile);
   if (appConfig.ytdlpCookiesFromBrowser) args.push("--cookies-from-browser", appConfig.ytdlpCookiesFromBrowser);
-  args.push("--dump-single-json", "--skip-download", "--", normalizedUrl);
+  args.push("--ignore-no-formats-error", "--dump-single-json", "--skip-download", "--", normalizedUrl);
   return args;
 }
 
@@ -174,6 +175,112 @@ function safeText(value: unknown, fallback: string | null = null): string | null
   if (typeof value !== "string") return fallback;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, 20_000) : fallback;
+}
+
+function normalizeXiaohongshuThumbnailUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    const hostname = parsed.hostname.toLowerCase();
+    if (parsed.protocol === "http:" && (hostname === "xhscdn.com" || hostname.endsWith(".xhscdn.com"))) {
+      parsed.protocol = "https:";
+      return parsed.toString();
+    }
+  } catch {
+    // Preserve the extractor value; downstream URL validation still applies.
+  }
+  return value;
+}
+
+function thumbnailUrlFromInfo(info: Record<string, unknown>, request: ParseRequest): string | null {
+  const fallback = safeText(info.thumbnail);
+  if (request.platform.id !== "xiaohongshu") return fallback;
+  if (!Array.isArray(info.thumbnails)) return normalizeXiaohongshuThumbnailUrl(fallback);
+
+  const candidates = info.thumbnails.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const entry = value as Record<string, unknown>;
+    const url = safeText(entry.url);
+    return url ? [{ id: safeText(entry.id), url }] : [];
+  });
+  // XHS exposes default and preview variants with identical dimensions, so
+  // yt-dlp's synthesized top-level thumbnail can otherwise depend on order.
+  const selected = candidates.find((candidate) => /!nd_dft(?:_|$)/iu.test(candidate.url))
+    ?? (fallback ? { id: null, url: fallback } : null)
+    ?? candidates.find((candidate) => candidate.id === "0")
+    ?? candidates[0];
+
+  return normalizeXiaohongshuThumbnailUrl(selected?.url ?? fallback);
+}
+
+function xiaohongshuImageIdentity(url: string): string {
+  try {
+    const basename = new URL(url).pathname.split("/").filter(Boolean).at(-1) ?? url;
+    return basename.split("!", 1)[0]?.toLowerCase() || url;
+  } catch {
+    return url;
+  }
+}
+
+function imageFormatEntries(info: Record<string, unknown>, request: ParseRequest): MediaFormat[] {
+  if (request.platform.id !== "xiaohongshu") return [];
+
+  const explicit = Array.isArray(info.image_formats) ? info.image_formats : [];
+  const thumbnails = Array.isArray(info.thumbnails) ? info.thumbnails : [];
+  const source = explicit.length > 0
+    ? explicit
+    : (() => {
+        const records = thumbnails.filter((value): value is Record<string, unknown> =>
+          Boolean(value && typeof value === "object" && !Array.isArray(value)));
+        const defaults = records.filter((entry) => /!nd_dft(?:_|$)/iu.test(safeText(entry.url) ?? ""));
+        const selected = defaults.length > 0 ? defaults : records;
+        // yt-dlp may reorder XHS thumbnails between requests. The asset key is
+        // stable and preserves the gallery sequence when no sidecar is present.
+        return [...selected].sort((left, right) => {
+          const leftUrl = safeText(left.url) ?? "";
+          const rightUrl = safeText(right.url) ?? "";
+          const leftIdentity = xiaohongshuImageIdentity(leftUrl);
+          const rightIdentity = xiaohongshuImageIdentity(rightUrl);
+          return leftIdentity < rightIdentity ? -1 : leftIdentity > rightIdentity ? 1 : 0;
+        });
+      })();
+
+  const seen = new Set<string>();
+  const formats: MediaFormat[] = [];
+  for (const value of source) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const raw = value as Record<string, unknown>;
+    const rawUrl = safeText(raw.url);
+    const url = normalizeXiaohongshuThumbnailUrl(rawUrl);
+    if (!url || !isSafeRemoteHttpUrl(url)) continue;
+    const identity = xiaohongshuImageIdentity(url);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+
+    const index = formats.length + 1;
+    const ext = (safeText(raw.ext) ?? "jpg").toLowerCase().replace(/[^a-z0-9]/gu, "").slice(0, 10) || "jpg";
+    formats.push({
+      id: (safeText(raw.format_id) ?? `image-${index}`).slice(0, 100),
+      url,
+      ext,
+      mimeType: safeText(raw.mime) ?? safeText(raw.mimetype) ?? (ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`),
+      width: safeNumber(raw.width, 1),
+      height: safeNumber(raw.height, 1),
+      fps: null,
+      bitrateKbps: null,
+      filesize: safeNumber(raw.filesize, 0) ?? safeNumber(raw.filesize_approx, 0),
+      qualityLabel: safeText(raw.format_note) ?? `Image ${index}`,
+      videoCodec: null,
+      audioCodec: null,
+      hasVideo: false,
+      hasAudio: false,
+      requiresMuxing: false,
+      downloadMode: "direct",
+      mediaType: "image",
+      httpHeaders: safeMediaHeaders(raw.http_headers),
+    });
+  }
+  return formats;
 }
 
 function safeNumber(value: unknown, minimum = 0): number | null {
@@ -318,13 +425,16 @@ function subtitleMimeType(ext: string): string {
 
 function subtitleFormatEntries(info: Record<string, unknown>): MediaFormat[] {
   const formats: MediaFormat[] = [];
-  const languagesWithManualTracks = new Set<string>();
 
   const collect = (value: unknown, automatic: boolean): void => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return;
     for (const [rawLanguage, rawTracks] of Object.entries(value as Record<string, unknown>)) {
       const language = rawLanguage.trim().slice(0, 80);
-      if (!language || !Array.isArray(rawTracks) || (automatic && languagesWithManualTracks.has(language))) continue;
+      // yt-dlp exposes non-transcript streams such as YouTube live_chat in the
+      // same dictionaries. They must never be presented as spoken video text.
+      if (!language
+        || /^(?:live[_-]?chat|chat|comments?|danmaku|danmu)$/iu.test(language)
+        || !Array.isArray(rawTracks)) continue;
       const candidates = rawTracks
         .filter((track): track is Record<string, unknown> => Boolean(track && typeof track === "object" && !Array.isArray(track)))
         .map((track) => ({
@@ -338,34 +448,34 @@ function subtitleFormatEntries(info: Record<string, unknown>): MediaFormat[] {
           const bPriority = SUBTITLE_EXT_PRIORITY.indexOf(b.ext as typeof SUBTITLE_EXT_PRIORITY[number]);
           return (aPriority < 0 ? 999 : aPriority) - (bPriority < 0 ? 999 : bPriority);
         });
-      const selected = candidates[0];
-      if (!selected?.url) continue;
-      if (!automatic) languagesWithManualTracks.add(language);
       const slug = language.replace(/[^A-Za-z0-9._-]/gu, "-").replace(/-+/gu, "-").slice(0, 48) || "track";
-      const name = safeText(selected.track.name);
-      formats.push({
-        id: `subtitle-${automatic ? "auto" : "manual"}-${slug}-${formats.length}`.slice(0, 100),
-        url: selected.url,
-        ext: selected.ext,
-        mimeType: subtitleMimeType(selected.ext),
-        width: null,
-        height: null,
-        fps: null,
-        bitrateKbps: null,
-        filesize: null,
-        qualityLabel: name && name.toLowerCase() !== language.toLowerCase() ? `${language} / ${name}` : language,
-        videoCodec: null,
-        audioCodec: null,
-        hasVideo: false,
-        hasAudio: false,
-        requiresMuxing: false,
-        downloadMode: "yt-dlp",
-        mediaType: "subtitle",
-        language,
-        automatic,
-        httpHeaders: safeMediaHeaders(selected.track.http_headers),
-      });
-      if (formats.length >= 200) return;
+      for (const selected of candidates) {
+        if (!selected.url) continue;
+        const name = safeText(selected.track.name);
+        formats.push({
+          id: `subtitle-${automatic ? "auto" : "manual"}-${slug}-${selected.ext}-${formats.length}`.slice(0, 100),
+          url: selected.url,
+          ext: selected.ext,
+          mimeType: subtitleMimeType(selected.ext),
+          width: null,
+          height: null,
+          fps: null,
+          bitrateKbps: null,
+          filesize: null,
+          qualityLabel: name && name.toLowerCase() !== language.toLowerCase() ? `${language} / ${name}` : language,
+          videoCodec: null,
+          audioCodec: null,
+          hasVideo: false,
+          hasAudio: false,
+          requiresMuxing: false,
+          downloadMode: "yt-dlp",
+          mediaType: "subtitle",
+          language,
+          automatic,
+          httpHeaders: safeMediaHeaders(selected.track.http_headers),
+        });
+        if (formats.length >= 200) return;
+      }
     }
   };
 
@@ -381,10 +491,25 @@ function subtitleDisplayRank(format: MediaFormat): number {
   return 2;
 }
 
+function subtitleExtensionRank(format: MediaFormat): number {
+  const rank = SUBTITLE_EXT_PRIORITY.indexOf(format.ext as typeof SUBTITLE_EXT_PRIORITY[number]);
+  return rank < 0 ? 999 : rank;
+}
+
 export function selectDisplaySubtitleFormats(formats: MediaFormat[]): MediaFormat[] {
+  const seenTracks = new Set<string>();
   return [...formats]
     .sort((a, b) => subtitleDisplayRank(a) - subtitleDisplayRank(b)
-      || (a.language ?? "").localeCompare(b.language ?? "", "en"))
+      || (a.language ?? "").localeCompare(b.language ?? "", "en")
+      || subtitleExtensionRank(a) - subtitleExtensionRank(b))
+    .filter((format) => {
+      // Keep the full set in metadata for deterministic fallback, while the UI
+      // only needs one preferred representation per manual/automatic language.
+      const key = `${format.automatic ? "auto" : "manual"}:${format.language?.toLowerCase() ?? ""}`;
+      if (seenTracks.has(key)) return false;
+      seenTracks.add(key);
+      return true;
+    })
     .slice(0, DISPLAY_SUBTITLE_LIMIT);
 }
 
@@ -496,10 +621,12 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
     if (fallback) formats.push(fallback);
   }
 
-  if (formats.length === 0) {
+  const imageFormats = formats.length === 0 ? imageFormatEntries(info, request) : [];
+
+  if (formats.length === 0 && imageFormats.length === 0) {
     const message =
       request.platform.id === "xiaohongshu"
-        ? "Xiaohongshu returned no downloadable video or audio formats. Check that this is a public video note rather than an image note; if the platform applies an access restriction, use an authorized session or configure the XHS-Downloader sidecar."
+        ? "Xiaohongshu returned no downloadable video, audio, or image formats. Check that the note is public; if the platform applies an access restriction, use an authorized session or configure the XHS-Downloader sidecar."
         : "The parser found metadata but no safe video or audio download formats. The source may be restricted or unsupported.";
     throw new ParserFailedError(
       message,
@@ -523,11 +650,12 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
     platform: request.platform,
     title: safeText(info.title, "Untitled media") ?? "Untitled media",
     description: safeText(info.description),
-    thumbnailUrl: safeText(info.thumbnail),
+    thumbnailUrl: imageFormats[0]?.url ?? thumbnailUrlFromInfo(info, request),
     uploader: safeText(info.uploader) ?? safeText(info.channel),
     durationSeconds: duration === null ? null : Math.round(duration),
     videoFormats,
     audioFormats,
+    imageFormats,
     subtitleFormats,
     metadata: {
       extractor: safeText(info.extractor),
@@ -544,10 +672,13 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
       displayVideoFormatCount: videoFormats.length,
       subtitleFormatCount: allSubtitleFormats.length,
       displaySubtitleFormatCount: subtitleFormats.length,
+      imageFormatCount: imageFormats.length,
+      mediaKind: imageFormats.length > 0 ? "image" : "video",
       formatPolicy: "highest-fps-per-resolution",
       allVideoFormats,
       allSubtitleFormats,
       subtitleFormats,
+      imageFormats,
     },
     mock: false,
   };
@@ -696,12 +827,12 @@ export class YtDlpAdapter implements ParserAdapter {
       if (request.platform.id === "xiaohongshu") {
         const noVideoFormats = /no video formats found/i.test(diagnostic);
         const sidecarHint = this.appConfig.xhsDownloaderApiUrl
-          ? " The configured XHS-Downloader sidecar could not obtain media either, which usually means this short link is expired, restricted, or points to an image note."
+          ? " The configured XHS-Downloader sidecar could not obtain media either, which usually means the share link is expired or the note is restricted."
           : "";
         throw new ParserFailedError(
           noVideoFormats
-            ? `Xiaohongshu returned no video stream for this note.${sidecarHint} A 300011/300031 response means the platform has restricted or removed the note. Re-copy a fresh public video-note share link; if the note only opens after login, configure an authorized session.`
-            : `yt-dlp could not read this Xiaohongshu URL.${sidecarHint} Confirm that it is a public video note rather than an image note, then re-copy a fresh share link or configure an authorized session.`,
+            ? `Xiaohongshu returned no downloadable media for this note.${sidecarHint} A 300011/300031 response means the platform has restricted or removed the note. Re-copy a fresh public share link; if the note only opens after login, configure an authorized session.`
+            : `yt-dlp could not read this Xiaohongshu URL.${sidecarHint} Confirm that the note is public, then re-copy a fresh share link or configure an authorized session.`,
           { exitCode: result.exitCode, diagnostic: diagnostic || "No diagnostic was returned by yt-dlp." },
         );
       }
@@ -721,7 +852,20 @@ export class YtDlpAdapter implements ParserAdapter {
       throw new ParserFailedError("yt-dlp returned no media metadata.");
     }
     try {
-      return parseYtDlpInfo(info as Record<string, unknown>, request);
+      const parsed = parseYtDlpInfo(info as Record<string, unknown>, request);
+      if (request.platform.id === "xiaohongshu" && parsed.imageFormats.length > 0) {
+        const sidecarResult = await this.parseWithXhsSidecar(sidecarUrl, request);
+        if (sidecarResult?.imageFormats.length) {
+          // The sidecar exposes higher-resolution CI originals for downloads,
+          // but that host can reject browser hotlinks. Keep yt-dlp's official
+          // DFT image as the visible cover while retaining the full originals.
+          return {
+            ...sidecarResult,
+            thumbnailUrl: parsed.thumbnailUrl ?? sidecarResult.thumbnailUrl,
+          };
+        }
+      }
+      return parsed;
     } catch (error) {
       const sidecarResult = await this.parseWithXhsSidecar(sidecarUrl, request);
       if (sidecarResult) return sidecarResult;
@@ -790,6 +934,7 @@ export class MockParserAdapter implements ParserAdapter {
           httpHeaders: {},
         },
       ],
+      imageFormats: [],
       subtitleFormats: [],
       metadata: { parser: "mock", sourceHost: request.platform.hostname, subtitleFormats: [], allSubtitleFormats: [] },
       mock: true,
