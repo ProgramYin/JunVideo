@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 
 export type ParserMode = "mock" | "yt-dlp" | "auto";
@@ -14,8 +15,22 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(1).optional(),
   JWT_EXPIRES_IN: z.string().min(1).default("7d"),
   YTDLP_PATH: z.string().min(1).default("yt-dlp"),
+  YTDLP_RETRIES: z.coerce.number().int().min(0).max(20).default(0),
+  YTDLP_EXTRACTOR_RETRIES: z.coerce.number().int().min(0).max(20).default(0),
+  YTDLP_FRAGMENT_RETRIES: z.coerce.number().int().min(0).max(20).default(0),
+  YTDLP_SOCKET_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
   YTDLP_COOKIES_FILE: z.string().optional(),
   YTDLP_COOKIES_FROM_BROWSER: z.string().optional(),
+  PYTHON_PATH: z.string().optional(),
+  FFMPEG_PATH: z.string().optional(),
+  WHISPER_MODEL: z.string().trim().min(1).max(40).default("tiny"),
+  TRANSCRIPTION_ENABLED: z.enum(["true", "false"]).default("true"),
+  TRANSCRIPTION_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(60 * 60 * 1000).default(15 * 60 * 1000),
+  TRANSCRIPTION_MAX_BYTES: z.coerce.number().int().min(1_048_576).max(2 * 1024 * 1024 * 1024).default(512 * 1024 * 1024),
+  CORRECTION_MODE: z.enum(["rules", "openai", "none"]).default("rules"),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().url().default("https://api.openai.com/v1"),
+  OPENAI_CORRECTION_MODEL: z.string().trim().min(1).max(100).default("gpt-4o-mini"),
   DOUYIN_BROWSER_FALLBACK: z.enum(["true", "false"]).default("true"),
   JUNVIDEO_BROWSER_PATH: z.string().optional(),
   BROWSER_FALLBACK_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(120_000).default(35_000),
@@ -44,12 +59,17 @@ try {
   throw new Error(`LOCAL_TIME_ZONE is invalid: ${parsedEnv.LOCAL_TIME_ZONE}`);
 }
 
-const parserMode: ParserMode = parsedEnv.PARSER_MODE ?? (isProduction ? "yt-dlp" : "mock");
+// Real parsing is the default in every environment. Mock mode remains an
+// explicit opt-in for UI-only development and never hides a missing parser.
+const parserMode: ParserMode = parsedEnv.PARSER_MODE ?? "yt-dlp";
 const devVipEnabled = parsedEnv.DEV_VIP_ENABLED
   ? parsedEnv.DEV_VIP_ENABLED === "true"
   : !isProduction;
 const ytdlpCookiesFile = parsedEnv.YTDLP_COOKIES_FILE?.trim() || undefined;
 const ytdlpCookiesFromBrowser = parsedEnv.YTDLP_COOKIES_FROM_BROWSER?.trim() || undefined;
+const pythonPath = parsedEnv.PYTHON_PATH?.trim() || "python";
+const ffmpegPath = parsedEnv.FFMPEG_PATH?.trim() || "ffmpeg";
+const openAiApiKey = parsedEnv.OPENAI_API_KEY?.trim() || undefined;
 const xhsDownloaderApiUrl = parsedEnv.XHS_DOWNLOADER_API_URL?.trim() || undefined;
 const xhsDownloaderCookie = parsedEnv.XHS_DOWNLOADER_COOKIE?.trim() || undefined;
 const xhsDownloaderProxy = parsedEnv.XHS_DOWNLOADER_PROXY?.trim() || undefined;
@@ -70,6 +90,15 @@ if (ytdlpCookiesFile && ytdlpCookiesFromBrowser) {
   throw new Error("Configure only one of YTDLP_COOKIES_FILE or YTDLP_COOKIES_FROM_BROWSER.");
 }
 
+function resolveYtdlpPath(value: string): string {
+  const trimmed = value.trim();
+  // Keep bare executable names on PATH. Resolve configured relative paths so
+  // starting the API from another working directory does not break parsing.
+  return isAbsolute(trimmed) || /[\\/]/u.test(trimmed) || trimmed.startsWith(".")
+    ? resolve(process.cwd(), trimmed)
+    : trimmed;
+}
+
 export const config = {
   nodeEnv: parsedEnv.NODE_ENV,
   isProduction,
@@ -79,9 +108,23 @@ export const config = {
   databaseSsl: parsedEnv.DATABASE_SSL === "true",
   jwtSecret,
   jwtExpiresIn: parsedEnv.JWT_EXPIRES_IN,
-  ytdlpPath: parsedEnv.YTDLP_PATH,
+  ytdlpPath: resolveYtdlpPath(parsedEnv.YTDLP_PATH),
+  ytdlpRetries: parsedEnv.YTDLP_RETRIES,
+  ytdlpExtractorRetries: parsedEnv.YTDLP_EXTRACTOR_RETRIES,
+  ytdlpFragmentRetries: parsedEnv.YTDLP_FRAGMENT_RETRIES,
+  ytdlpSocketTimeoutMs: parsedEnv.YTDLP_SOCKET_TIMEOUT_MS,
   ytdlpCookiesFile,
   ytdlpCookiesFromBrowser,
+  pythonPath,
+  ffmpegPath,
+  whisperModel: parsedEnv.WHISPER_MODEL,
+  transcriptionEnabled: parsedEnv.TRANSCRIPTION_ENABLED === "true",
+  transcriptionTimeoutMs: parsedEnv.TRANSCRIPTION_TIMEOUT_MS,
+  transcriptionMaxBytes: parsedEnv.TRANSCRIPTION_MAX_BYTES,
+  correctionMode: parsedEnv.CORRECTION_MODE,
+  openAiApiKey,
+  openAiBaseUrl: parsedEnv.OPENAI_BASE_URL.replace(/\/+$/u, ""),
+  openAiCorrectionModel: parsedEnv.OPENAI_CORRECTION_MODEL,
   douyinBrowserFallback: parsedEnv.DOUYIN_BROWSER_FALLBACK === "true",
   browserExecutablePath: parsedEnv.JUNVIDEO_BROWSER_PATH?.trim() || undefined,
   browserFallbackTimeoutMs: parsedEnv.BROWSER_FALLBACK_TIMEOUT_MS,

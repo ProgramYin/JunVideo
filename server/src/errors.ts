@@ -72,6 +72,26 @@ export class ParserFailedError extends AppError {
   }
 }
 
+export class TranscriptionUnavailableError extends AppError {
+  public constructor(message: string, details?: ErrorDetails) {
+    super(503, "TRANSCRIPTION_UNAVAILABLE", message, {
+      action: "Install Python, ffmpeg, and openai-whisper on the API server, then retry.",
+      details,
+    });
+    this.name = "TranscriptionUnavailableError";
+  }
+}
+
+export class TranscriptionFailedError extends AppError {
+  public constructor(message = "The video audio could not be transcribed.", details?: ErrorDetails) {
+    super(422, "TRANSCRIPTION_FAILED", message, {
+      action: "Check that the source contains audible speech and try again.",
+      details,
+    });
+    this.name = "TranscriptionFailedError";
+  }
+}
+
 export function asAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
 

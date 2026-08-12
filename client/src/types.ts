@@ -50,6 +50,14 @@ export interface ParseJob {
   options?: DownloadOption[];
 }
 
+export interface TranscriptResult {
+  rawText: string;
+  correctedText: string;
+  language: string;
+  model: string;
+  correctionMode: 'rules' | 'openai' | 'none';
+}
+
 export interface ApiHealth {
   ok: boolean;
   database: 'ok' | 'unavailable' | 'not_configured';

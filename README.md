@@ -101,3 +101,17 @@ The sidecar endpoint is called only after the normal yt-dlp attempt cannot produ
 ### Format retention and display policy
 
 JunVideo persists every normalized, structurally unique video format in `metadata.allVideoFormats`. The workspace intentionally displays only one format per detected height: the highest FPS stream wins, then bitrate, width, audio presence, and file size are used as tie breakers. A hidden remembered format can still be downloaded by its format id through the authenticated proxy API, while ordinary users see a short resolution list.
+
+## Video transcription and correction
+
+JunVideo now includes the reference Skill's workflow: `yt-dlp` metadata/stream selection, audio extraction through `ffmpeg`, local Whisper transcription, then transcript correction. The API endpoint is `POST /api/transcribe/:jobId`; the workspace exposes it below a successful parse result.
+
+Install the optional local transcription runtime on the API machine:
+
+```powershell
+python -m pip install -r requirements-transcription.txt
+```
+
+`ffmpeg` must be installed and available through `FFMPEG_PATH`. `WHISPER_MODEL=tiny` is the fast default. `CORRECTION_MODE=rules` works offline with conservative common-ASR corrections; set `CORRECTION_MODE=openai` and configure `OPENAI_API_KEY` to use an OpenAI-compatible HTTP correction endpoint. The raw transcript is retained in the response alongside the corrected text, and temporary audio files are removed after each request.
+
+The reference implementation is used for workflow and platform-boundary ideas, while JunVideo keeps yt-dlp as the primary extractor instead of vendoring a second platform parser. Only public, authorized media is supported; DRM, login walls, paywalls, and access-control bypass are not provided.

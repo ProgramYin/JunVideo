@@ -14,6 +14,11 @@ export const urlBodySchema = z.object({
 
 export const uuidSchema = z.string().uuid();
 
+export const transcriptionBodySchema = z.object({
+  language: z.string().trim().min(1).max(40).optional(),
+  model: z.enum(["tiny", "base", "small", "medium", "large", "turbo"]).optional(),
+});
+
 export function parseBody<T>(schema: ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body);
   if (result.success) return result.data;

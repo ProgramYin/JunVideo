@@ -11,6 +11,7 @@ import {
   ExternalLink,
   FileAudio,
   FileImage,
+  FileText,
   FileVideo,
   History as HistoryIcon,
   Languages,
@@ -37,6 +38,7 @@ import {
   login,
   me,
   parseUrl,
+  transcribeVideo,
   register,
   saveLocale,
   setToken,
@@ -415,11 +417,46 @@ function PlatformCard({ tx }: { tx: (key: CopyKey) => string }) {
   return <div className="platform-card"><div className="side-card-heading"><span className="section-kicker">{tx('supported')}</span><span className="live-dot" /></div><div className="mini-platforms"><span className="mini-platform coral">抖</span><span className="mini-platform rose">小</span><span className="mini-platform blue">B</span><span className="mini-platform ink">+</span></div><div className="platform-card-copy"><strong>Douyin · Xiaohongshu · Bilibili</strong><span>{tx('platformsHint')}</span></div></div>;
 }
 
-function ResultCard({ job, locale, tx, onRefresh }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
+function ResultCardBase({ job, locale, tx, onRefresh }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
   if (!job) return <div className="result-empty"><div className="empty-art"><span /><span /><span /></div><h3>{tx('noResult')}</h3><p>{tx('noResultHint')}</p></div>;
   if (job.status === 'failed') return <div className="result-card result-failed"><div className="result-header"><div><span className="section-kicker">{tx('resultTitle')}</span><h2>{tx('failed')}</h2></div><span className="status-pill failed">!</span></div><p className="result-error">{job.errorMessage || tx('errorFallback')}</p><div className="failed-meta"><span>{friendlyPlatform(job.platform)}</span><span>{formatDate(job.createdAt, locale)}</span></div></div>;
   const options = job.options ?? [];
   return <div className="result-card"><div className="result-header"><div><span className="section-kicker">{tx('resultTitle')}</span><h2>{job.title || tx('ready')}</h2></div><span className="status-pill"><Check size={14} />{tx('ready')}</span></div><div className="result-media"><div className="thumbnail-wrap">{job.thumbnailUrl ? <img src={job.thumbnailUrl} alt="" /> : <div className="thumbnail-fallback"><Play size={24} fill="currentColor" /></div>}<span className="thumbnail-platform">{friendlyPlatform(job.platform)}</span></div><div className="result-info"><div className="metadata-line"><span><Link2 size={13} />{tx('source')} · {friendlyPlatform(job.platform)}</span><span><Clock3 size={13} />{formatDuration(job.durationSeconds)}</span></div><p>{job.author || 'JunVideo'}</p><small>{formatDate(job.createdAt, locale)}</small></div></div><div className="download-options">{options.length > 0 ? options.map((option) => <DownloadOptionRow key={option.id} option={option} job={job} tx={tx} onRefresh={onRefresh} />) : <div className="option-placeholder"><span /><span /><span /></div>}</div></div>;
+}
+
+function ResultCard({ job, locale, tx, onRefresh }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
+  return <>
+    <ResultCardBase job={job} locale={locale} tx={tx} onRefresh={onRefresh} />
+    {job && job.status !== 'failed' && <TranscriptPanel job={job} tx={tx} />}
+  </>;
+}
+
+function TranscriptPanel({ job, tx }: { job: ParseJob; tx: (key: CopyKey) => string }) {
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcript, setTranscript] = useState<import('./types').TranscriptResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function startTranscription() {
+    setIsTranscribing(true);
+    setError(null);
+    try {
+      setTranscript(await transcribeVideo(job, { language: 'Chinese' }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : tx('transcriptionFailed'));
+    } finally {
+      setIsTranscribing(false);
+    }
+  }
+
+  async function copyTranscript() {
+    if (!transcript) return;
+    await navigator.clipboard.writeText(transcript.correctedText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  return <section className="transcript-panel"><div className="transcript-heading"><div><span className="section-kicker">04 / {tx('transcriptTitle')}</span><h3><FileText size={17} />{tx('transcriptTitle')}</h3></div><button className="outline-button transcript-action" type="button" onClick={() => void startTranscription()} disabled={isTranscribing}>{isTranscribing ? <span className="button-spinner" /> : <FileText size={15} />}{isTranscribing ? tx('transcribing') : tx('transcribe')}</button></div>{error && <p className="transcript-error">{error}</p>}{transcript && <div className="transcript-result"><div className="transcript-result-top"><span>{transcript.correctionMode === 'openai' ? 'AI correction' : tx('correctedTranscript')}</span><button className="text-button" type="button" onClick={() => void copyTranscript()}><Copy size={14} />{copied ? tx('copied') : tx('copyTranscript')}</button></div><p>{transcript.correctedText}</p>{transcript.rawText !== transcript.correctedText && <details><summary>{tx('rawTranscript')}</summary><p>{transcript.rawText}</p></details>}</div>}</section>;
 }
 
 function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOption; job: ParseJob; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {

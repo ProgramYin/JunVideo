@@ -1,5 +1,3 @@
-import { spawn, type ChildProcessByStdio } from "node:child_process";
-import type { Readable } from "node:stream";
 import { config, type AppConfig } from "./config.js";
 import { extractDouyinInfoWithBrowser } from "./douyin-browser.js";
 import { extractXhsInfoWithDownloader } from "./xhs-downloader.js";
@@ -14,6 +12,7 @@ import {
   type PlatformInfo,
   type UrlPreflight,
 } from "./platform.js";
+import { runProcess, type ProcessResult } from "./process.js";
 
 export interface MediaFormat {
   id: string;
@@ -68,81 +67,43 @@ export interface ParserAdapter {
   parse(request: ParseRequest): Promise<ParseResult>;
 }
 
-interface ProcessResult {
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
+const AVAILABILITY_CACHE_MS = 15_000;
+
+export function buildYtDlpArgs(
+  normalizedUrl: string,
+  appConfig: Pick<AppConfig, "ytdlpCookiesFile" | "ytdlpCookiesFromBrowser" | "ytdlpRetries" | "ytdlpExtractorRetries" | "ytdlpFragmentRetries" | "ytdlpSocketTimeoutMs">,
+): string[] {
+  const args = [
+    "--ignore-config",
+    "--no-playlist",
+    "--no-warnings",
+    "--quiet",
+    "--retries", String(appConfig.ytdlpRetries),
+    "--extractor-retries", String(appConfig.ytdlpExtractorRetries),
+    "--fragment-retries", String(appConfig.ytdlpFragmentRetries),
+    "--socket-timeout", String(Math.ceil(appConfig.ytdlpSocketTimeoutMs / 1_000)),
+  ];
+  if (appConfig.ytdlpCookiesFile) args.push("--cookies", appConfig.ytdlpCookiesFile);
+  if (appConfig.ytdlpCookiesFromBrowser) args.push("--cookies-from-browser", appConfig.ytdlpCookiesFromBrowser);
+  args.push("--dump-single-json", "--skip-download", "--", normalizedUrl);
+  return args;
 }
 
-const MAX_YTDLP_OUTPUT_BYTES = 12 * 1024 * 1024;
-const AVAILABILITY_CACHE_MS = 15_000;
+function parseJsonOutput(stdout: string): unknown {
+  const trimmed = stdout.trim();
+  if (!trimmed) throw new Error("yt-dlp returned empty metadata output.");
+  // Keep parsing resilient to an executable wrapper that writes a short
+  // diagnostic before the JSON document. yt-dlp itself writes diagnostics to
+  // stderr, but this costs nothing and prevents false parse failures.
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  const candidate = start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
+  return JSON.parse(candidate) as unknown;
+}
 
 function processErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-function runChildProcess(
-  command: string,
-  args: readonly string[],
-  timeoutMs: number,
-  maxOutputBytes = MAX_YTDLP_OUTPUT_BYTES,
-): Promise<ProcessResult> {
-  return new Promise((resolve, reject) => {
-    let child: ChildProcessByStdio<null, Readable, Readable>;
-    try {
-      child = spawn(command, [...args], {
-        shell: false,
-        windowsHide: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (error) {
-      reject(error);
-      return;
-    }
-
-    let stdout = "";
-    let stderr = "";
-    let outputBytes = 0;
-    let settled = false;
-    let timedOut = false;
-
-    const finish = (error?: Error, result?: ProcessResult): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(result as ProcessResult);
-    };
-
-    const append = (target: "stdout" | "stderr", chunk: Buffer | string): void => {
-      const text = chunk.toString();
-      outputBytes += Buffer.byteLength(text);
-      if (outputBytes > maxOutputBytes) {
-        child.kill();
-        finish(new Error("yt-dlp output exceeded the configured safety limit."));
-        return;
-      }
-      if (target === "stdout") stdout += text;
-      else stderr += text;
-    };
-
-    child.stdout.on("data", (chunk: Buffer | string) => append("stdout", chunk));
-    child.stderr.on("data", (chunk: Buffer | string) => append("stderr", chunk));
-    child.once("error", (error) => finish(error));
-    child.once("close", (exitCode, signal) => {
-      finish(undefined, { exitCode, signal, stdout, stderr });
-    });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-      finish(new Error(`yt-dlp timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-
-    void timedOut;
-  });
 }
 
 function restrictedSource(stderr: string): boolean {
@@ -194,13 +155,19 @@ function safeText(value: unknown, fallback: string | null = null): string | null
 }
 
 function safeNumber(value: unknown, minimum = 0): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < minimum) return null;
-  return value;
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim()
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < minimum) return null;
+  return parsed;
 }
 
 const FORWARDED_MEDIA_HEADERS: Record<string, string> = {
   accept: "Accept",
   "accept-language": "Accept-Language",
+  origin: "Origin",
   referer: "Referer",
   "user-agent": "User-Agent",
 };
@@ -287,7 +254,7 @@ function mediaFormatFromRaw(raw: Record<string, unknown>, index: number): MediaF
     id: id.slice(0, 100),
     url: rawUrl,
     ext: ext?.slice(0, 20) ?? null,
-    mimeType: safeText(raw.mime) ?? inferredMimeType(ext, hasVideo, hasAudio),
+    mimeType: safeText(raw.mime) ?? safeText(raw.mimetype) ?? inferredMimeType(ext, hasVideo, hasAudio),
     width,
     height,
     fps,
@@ -298,6 +265,8 @@ function mediaFormatFromRaw(raw: Record<string, unknown>, index: number): MediaF
     audioCodec,
     hasVideo,
     hasAudio,
+    // A direct muxed format is already playable. Only video-only formats need
+    // a server-side merge, which JunVideo currently exposes as a raw stream.
     requiresMuxing: hasVideo && !hasAudio,
     httpHeaders: safeMediaHeaders(raw.http_headers),
   };
@@ -359,8 +328,11 @@ export function selectDisplayVideoFormats(formats: MediaFormat[]): MediaFormat[]
     .map(({ format }) => format);
 }
 
-function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequest): ParseResult {
-  const rawFormats = Array.isArray(info.formats) ? info.formats : [];
+export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequest): ParseResult {
+  const rawFormats = [
+    ...(Array.isArray(info.formats) ? info.formats : []),
+    ...(Array.isArray(info.requested_formats) ? info.requested_formats : []),
+  ];
   const formats = deduplicateFormats(
     rawFormats.flatMap((value, index) => {
       if (!value || typeof value !== "object") return [];
@@ -459,7 +431,7 @@ export class YtDlpAdapter implements ParserAdapter {
     }
 
     try {
-      const result = await runChildProcess(this.appConfig.ytdlpPath, ["--version"], 5_000, 128 * 1024);
+      const result = await runProcess(this.appConfig.ytdlpPath, ["--version"], 5_000, 128 * 1024);
       const available = result.exitCode === 0;
       const message = available
         ? `yt-dlp is available${result.stdout.trim() ? ` (${result.stdout.trim().slice(0, 50)})` : ""}.`
@@ -480,28 +452,12 @@ export class YtDlpAdapter implements ParserAdapter {
 
   public async parse(request: ParseRequest): Promise<ParseResult> {
     const normalizedUrl = normalizeAndValidateUrl(request.sourceUrl);
-    const args = [
-      "--ignore-config",
-      "--no-playlist",
-      "--no-warnings",
-    ];
-    if (this.appConfig.ytdlpCookiesFile) {
-      args.push("--cookies", this.appConfig.ytdlpCookiesFile);
-    }
-    if (this.appConfig.ytdlpCookiesFromBrowser) {
-      args.push("--cookies-from-browser", this.appConfig.ytdlpCookiesFromBrowser);
-    }
-    args.push(
-      "--dump-single-json",
-      "--skip-download",
-      "--",
-      normalizedUrl,
-    );
+    const args = buildYtDlpArgs(normalizedUrl, this.appConfig);
 
     let result: ProcessResult;
     let sidecarUrl = normalizedUrl;
     try {
-      result = await runChildProcess(this.appConfig.ytdlpPath, args, this.appConfig.parseTimeoutMs);
+      result = await runProcess(this.appConfig.ytdlpPath, args, this.appConfig.parseTimeoutMs);
     } catch (error) {
       const message = processErrorMessage(error);
       if (/enoent|not found|cannot find/i.test(message)) {
@@ -520,7 +476,7 @@ export class YtDlpAdapter implements ParserAdapter {
         const retryArgs = [...args];
         retryArgs[retryArgs.length - 1] = redirectedUrl;
         try {
-          result = await runChildProcess(this.appConfig.ytdlpPath, retryArgs, this.appConfig.parseTimeoutMs);
+          result = await runProcess(this.appConfig.ytdlpPath, retryArgs, this.appConfig.parseTimeoutMs);
         } catch (error) {
           const message = processErrorMessage(error);
           if (/timed out/i.test(message)) {
@@ -577,7 +533,7 @@ export class YtDlpAdapter implements ParserAdapter {
 
     let info: unknown;
     try {
-      info = JSON.parse(result.stdout.trim());
+      info = parseJsonOutput(result.stdout);
     } catch {
       throw new ParserFailedError("yt-dlp returned an invalid metadata response.");
     }

@@ -1,4 +1,4 @@
-import type { ApiHealth, Locale, ParseJob, Usage, User } from './types';
+import type { ApiHealth, Locale, ParseJob, TranscriptResult, Usage, User } from './types';
 
 const API_BASE = '/api';
 const TOKEN_KEY = 'junvideo_token';
@@ -182,6 +182,14 @@ export async function parseUrl(url: string) {
     }
     throw error;
   }
+}
+
+export async function transcribeVideo(job: ParseJob, options: { language?: string; model?: string } = {}) {
+  const payload = await request<{ transcript: TranscriptResult }>(`/transcribe/${encodeURIComponent(job.id)}`, {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+  return payload.transcript;
 }
 
 export async function history() {

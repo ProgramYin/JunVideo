@@ -4,9 +4,11 @@ import { errorHandler, notFoundHandler } from "./errors.js";
 import { corsMiddleware, requestIdMiddleware, setSecurityHeaders } from "./http.js";
 import { ParserService } from "./parser.js";
 import { createApiRouter } from "./routes.js";
+import { TranscriptService } from "./transcription.js";
 
 export interface AppDependencies {
   parser?: ParserService;
+  transcriptService?: TranscriptService;
 }
 
 export function createApp(dependencies: AppDependencies = {}): Express {
@@ -20,7 +22,7 @@ export function createApp(dependencies: AppDependencies = {}): Express {
   app.use(express.json({ limit: "64kb", strict: true }));
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 
-  app.use("/api", createApiRouter(dependencies.parser ?? new ParserService()));
+  app.use("/api", createApiRouter(dependencies.parser ?? new ParserService(), dependencies.transcriptService ?? new TranscriptService()));
   app.use(notFoundHandler);
   app.use(errorHandler);
   return app;
