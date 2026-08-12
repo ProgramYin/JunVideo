@@ -1,0 +1,31 @@
+{
+  "runId": "20260810-junvideo-mvp",
+  "status": "completed_with_explicit_limits",
+  "objective": "完成 JunVideo 本地可运行 MVP：认证、PostgreSQL、每日额度/VIP、中文默认双语界面、可扩展平台识别与视频/音频解析下载入口。",
+  "deliverables": [
+    "React + Vite 简约响应式工作台，中文默认且可用 VITE_DEFAULT_LOCALE 配置，支持中英切换。",
+    "Express + TypeScript API，JWT/bcrypt 注册登录、历史记录、用量查询和开发 VIP 入口。",
+    "PostgreSQL schema、初始化脚本与并发安全的本地时区每日 10 次额度。",
+    "yt-dlp adapter、mock adapter、平台 catalog、URL/SSRF 安全校验、视频/音频格式标准化和带授权头的安全媒体代理。",
+    "会话可配置：YTDLP_COOKIES_FILE 与 YTDLP_COOKIES_FROM_BROWSER 二选一。",
+    "解析结果提供视频、音频、封面图片三类第二阶段下载入口；首次解析不拉取媒体正文。",
+    "README、.env.example、确定性单元测试、后端 smoke、真实 Bilibili 验证记录。"
+  ],
+  "verification": {
+    "build": "passed: npm.cmd run build",
+    "tests": "passed: npm.cmd test; 8 tests passed",
+    "database": "passed: npm.cmd run db:init",
+    "backendSmoke": "passed: npm run smoke against mock API; quota/VIP extended smoke passed",
+    "realBilibili": "passed: exact Chinese/Markdown paste parse HTTP 201; authenticated proxy HTTP 200; complete 23550542-byte low-quality video, 8293437-byte audio, and 1275088-byte cover reads; highest-quality 220481131-byte stream was previously verified, while one later CDN connection exceeded the 5-minute harness timeout",
+    "priorityPlatforms": "recognized all three; Douyin/Xiaohongshu returned actionable platform-condition errors; three-round two-phase smoke passed for Bilibili video/audio/cover probes",
+    "providedTestCases": "passed: npm run smoke:cases processed all 7 lines from 测试用例.txt; all URLs were extracted and recognized, both Bilibili cases returned metadata plus 200 video/audio/cover probes, and platform failures were actionable",
+    "frontend": "passed: local browser verification of API status, Chinese share-text extraction, Bilibili two-phase options, and cover download action; production bundle passed"
+  },
+  "nextProductionWork": [
+    "Implement payment provider orders/webhooks and expiring VIP entitlements.",
+    "Add IP/user request rate limiting, metrics, structured logs and encrypted secret/cookie storage.",
+    "Add ffmpeg job-queue muxing if single-file downloads are required.",
+    "Maintain current platform-specific public-link regression tests as yt-dlp and platform behavior change."
+  ],
+  "handoff": "See README.md and .env.example for setup, parser mode, cookies-session configuration and legal boundaries."
+}

@@ -1,0 +1,11 @@
+{
+  "runId": "20260810-junvideo-mvp",
+  "status": "completed",
+  "tasks": [
+    { "id": "task_0001", "title": "固化产品规格与首轮合同", "status": "completed", "owner": "orchestrator" },
+    { "id": "task_0002", "title": "实现后端 API、数据库与解析服务", "status": "completed", "owner": "worker" },
+    { "id": "task_0003", "title": "实现前端工作台、认证与多语言", "status": "completed", "owner": "orchestrator" },
+    { "id": "task_0004", "title": "运行真实/模拟解析路径与构建验证", "status": "completed", "owner": "orchestrator" },
+    { "id": "task_0005", "title": "只读审查与修复验收问题", "status": "completed", "owner": "orchestrator" }
+  ]
+}

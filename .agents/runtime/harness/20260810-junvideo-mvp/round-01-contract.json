@@ -1,0 +1,26 @@
+{
+  "round": 1,
+  "goal": "从空目录完成 JunVideo 的首个可运行 MVP，覆盖端到端认证、用量控制、解析结果和响应式界面。",
+  "ownedTasks": ["task_0002", "task_0003", "task_0004"],
+  "deliverables": [
+    "可安装、可启动的根项目与环境示例",
+    "PostgreSQL schema/初始化脚本和 Express API",
+    "JWT 注册登录、每日10次普通额度、VIP开发模式开通与历史记录",
+    "yt-dlp 适配器、平台识别、视频/音频下载入口和 mock 解析模式",
+    "中文默认/英文切换的简约响应式前端",
+    "README、健康检查、测试或确定性验证脚本"
+  ],
+  "verificationPlan": [
+    { "criterion": "项目依赖可以安装，TypeScript 前后端可以构建", "howToCheck": "npm install; npm run build", "hardFail": true },
+    { "criterion": "健康检查返回数据库和解析器状态", "howToCheck": "启动 API 后请求 GET /api/health", "hardFail": true },
+    { "criterion": "注册/登录返回 JWT，错误密码被拒绝", "howToCheck": "调用 auth API 进行成功与失败断言", "hardFail": true },
+    { "criterion": "普通用户最多每天10次，VIP不消耗限制", "howToCheck": "API 集成测试或可重复 service-level test", "hardFail": true },
+    { "criterion": "抖音、小红书、Bilibili 链接能被识别为对应平台", "howToCheck": "调用平台检测/解析前置 API 断言 platform 字段", "hardFail": true },
+    { "criterion": "解析成功时返回元数据与视频/音频下载选项，解析不可用时返回可理解错误", "howToCheck": "mock 模式端到端解析测试；真实 yt-dlp 可用时额外探测", "hardFail": true },
+    { "criterion": "前端默认中文，语言切换和登录/注册/历史/VIP状态可见", "howToCheck": "构建检查 + 本地浏览器/静态源码检查", "hardFail": false },
+    { "criterion": "产品不承诺绕过 DRM/付费墙并提示版权与平台条款", "howToCheck": "README 与 UI 文案检查", "hardFail": false }
+  ],
+  "nonGoals": ["生产支付接入", "后台运营面板", "绕过平台访问控制", "永久缓存视频文件"],
+  "handoffPaths": ["server/", "database/", "client/", "scripts/", "package.json", "README.md", ".env.example"],
+  "notes": ["没有可用的 yt-dlp/ffmpeg 全局命令时，必须保留 mock 模式并给出安装指引。"]
+}

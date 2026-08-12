@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+.runtime/
+bin/yt-dlp*
+*.log
+.DS_Store

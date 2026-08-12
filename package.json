@@ -1,0 +1,48 @@
+{
+  "name": "junvideo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JunVideo — a focused, extensible video link parser workspace.",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch server/src/index.ts",
+    "dev:web": "vite",
+    "build": "npm run build:api && vite build",
+    "build:api": "tsc -p tsconfig.server.json",
+    "start": "node dist/server/src/index.js",
+    "db:init": "node scripts/init-db.mjs",
+    "setup:ytdlp": "node scripts/setup-ytdlp.mjs",
+    "setup:xhs": "node scripts/setup-xhs-downloader.mjs",
+    "smoke": "node scripts/backend-smoke.mjs",
+    "smoke:priority": "node scripts/priority-three-round-smoke.mjs",
+    "smoke:cases": "node scripts/test-cases-smoke.mjs",
+    "test": "npm run build:api && node --test dist/server/src/platform.test.js dist/server/src/usage.test.js dist/server/src/jobs.test.js dist/server/src/jobs-remembered.test.js dist/server/src/routes.test.js dist/server/src/xhs-downloader.test.js dist/server/src/parser.test.js dist/server/src/validation.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.468.0",
+    "pg": "^8.13.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.10.7",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.1.0"
+  }
+}
