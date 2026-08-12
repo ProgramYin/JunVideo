@@ -24,10 +24,11 @@ assert.ok(health.body && health.body.service === "junvideo-api", "health respons
 
 const registration = await request("/api/auth/register", {
   method: "POST",
-  body: JSON.stringify({ email, password }),
+  body: JSON.stringify({ name: "Backend Smoke", email, password }),
 });
 assert.equal(registration.response.status, 201, "registration succeeds");
 assert.ok(registration.body?.token, "registration returns a JWT");
+assert.equal(registration.body?.user?.name, "Backend Smoke", "registration persists the supplied account name");
 
 const wrongLogin = await request("/api/auth/login", {
   method: "POST",

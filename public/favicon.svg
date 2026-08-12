@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="JunVideo">
+  <rect width="64" height="64" rx="17" fill="#151719"/>
+  <path d="M0 17A17 17 0 0 1 17 0h15v32H0z" fill="#f36f54"/>
+  <path d="M0 32h32v32H17A17 17 0 0 1 0 47z" fill="#6d78ed"/>
+  <path d="M32 32h32v15a17 17 0 0 1-17 17H32z" fill="#151719"/>
+  <path d="M32 0h15a17 17 0 0 1 17 17v15H32z" fill="#ececff"/>
+</svg>

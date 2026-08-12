@@ -33,3 +33,35 @@ test("a parsed thumbnail is exposed as a safe image download format", () => {
   assert.equal(format.mimeType, "image/webp");
   assert.match(safeDownloadFilename("中文封面", "image", format), /\.webp$/);
 });
+
+test("remembered subtitle formats are selectable by id", () => {
+  const subtitleRow = {
+    ...row,
+    metadata: {
+      allSubtitleFormats: [{
+        id: "subtitle-manual-en-0",
+        url: "https://cdn.example.com/en.vtt",
+        ext: "vtt",
+        mimeType: "text/vtt",
+        width: null,
+        height: null,
+        fps: null,
+        bitrateKbps: null,
+        filesize: null,
+        qualityLabel: "en / English",
+        videoCodec: null,
+        audioCodec: null,
+        hasVideo: false,
+        hasAudio: false,
+        requiresMuxing: false,
+        mediaType: "subtitle",
+        language: "en",
+        automatic: false,
+        httpHeaders: {},
+      }],
+    },
+  } as ParseJobRow;
+  const format = selectMediaFormat(subtitleRow, "subtitle", "subtitle-manual-en-0");
+  assert.equal(format.language, "en");
+  assert.match(safeDownloadFilename("Caption test", "subtitle", format), /\.vtt$/);
+});

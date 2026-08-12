@@ -190,3 +190,36 @@ test("browser fallback formats stay on their fresh direct media URLs", () => {
 
   assert.equal(result.videoFormats[0]?.downloadMode, "direct");
 });
+
+test("yt-dlp subtitles prefer manual tracks and retain automatic captions", () => {
+  const result = parseYtDlpInfo({
+    title: "Captioned video",
+    formats: [{
+      format_id: "18",
+      url: "https://cdn.example.com/video.mp4",
+      ext: "mp4",
+      vcodec: "h264",
+      acodec: "aac",
+      height: 360,
+    }],
+    subtitles: {
+      en: [{ ext: "json3", url: "https://cdn.example.com/en.json3" }, { ext: "vtt", url: "https://cdn.example.com/en.vtt", name: "English" }],
+    },
+    automatic_captions: {
+      en: [{ ext: "vtt", url: "https://cdn.example.com/en-auto.vtt" }],
+      "zh-Hans": [{ ext: "vtt", url: "https://cdn.example.com/zh-auto.vtt", name: "简体中文" }],
+    },
+  }, {
+    sourceUrl: "https://www.youtube.com/watch?v=test",
+    canonicalUrl: "https://www.youtube.com/watch?v=test",
+    platform: { id: "youtube", label: "YouTube", hostname: "youtube.com", recognized: true },
+  });
+
+  assert.equal(result.subtitleFormats.length, 2);
+  assert.equal(result.subtitleFormats[0]?.language, "en");
+  assert.equal(result.subtitleFormats[0]?.ext, "vtt");
+  assert.equal(result.subtitleFormats[0]?.automatic, false);
+  assert.equal(result.subtitleFormats[1]?.language, "zh-Hans");
+  assert.equal(result.subtitleFormats[1]?.automatic, true);
+  assert.equal(result.metadata.subtitleFormatCount, 2);
+});

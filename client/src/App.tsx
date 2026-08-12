@@ -95,6 +95,15 @@ function formatDate(date?: string | null, locale: Locale = 'zh') {
   }
 }
 
+function formatCompactNumber(value: unknown, locale: Locale) {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  return new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(numeric);
+}
+
 function friendlyPlatform(platform: string) {
   const map: Record<string, string> = {
     douyin: '抖音',
@@ -375,7 +384,7 @@ function App() {
 
             <aside className="workspace-aside">
               <UsageCard user={user} usageState={usageState} isVip={isVip} quotaLabel={quotaLabel} tx={tx} onUpgrade={() => go('vip')} />
-              <PlatformCard tx={tx} />
+              <PlatformCard tx={tx} service={service} />
               <div className="side-note"><div className="side-note-icon"><ShieldCheck size={17} /></div><p>{tx('legal')}</p></div>
             </aside>
           </section>
@@ -388,7 +397,7 @@ function App() {
       )}
 
       {view === 'history' && <HistoryView items={historyItems} isLoading={isLoadingHistory} locale={locale} tx={tx} onPick={(item) => { setJob(item); go('workspace'); }} />}
-      {view === 'vip' && <VipView user={user} isVip={isVip} locale={locale} tx={tx} onActivate={handleActivateVip} onLogin={() => setAuthMode('login')} />}
+      {view === 'vip' && <VipView user={user} isVip={isVip} locale={locale} tx={tx} onActivate={handleActivateVip} onLogin={() => setAuthMode('login')} devVipEnabled={Boolean(service?.features?.devVip)} />}
 
       <footer className="footer page-width"><div className="footer-brand"><span className="brand-mark small"><span>J</span><span>V</span></span><span>JunVideo</span></div><p>{tx('footer')}</p><span className="footer-status"><i />{service?.ok ? tx('systemOnline') : tx('systemChecking')}</span></footer>
 
@@ -413,15 +422,27 @@ function UsageCard({ user, usageState, isVip, quotaLabel, tx, onUpgrade }: { use
   </div>;
 }
 
-function PlatformCard({ tx }: { tx: (key: CopyKey) => string }) {
-  return <div className="platform-card"><div className="side-card-heading"><span className="section-kicker">{tx('supported')}</span><span className="live-dot" /></div><div className="mini-platforms"><span className="mini-platform coral">抖</span><span className="mini-platform rose">小</span><span className="mini-platform blue">B</span><span className="mini-platform ink">+</span></div><div className="platform-card-copy"><strong>Douyin · Xiaohongshu · Bilibili</strong><span>{tx('platformsHint')}</span></div></div>;
+function PlatformCard({ tx, service }: { tx: (key: CopyKey) => string; service: ApiHealth | null }) {
+  const extractorCount = service?.parser?.extractorCount;
+  const version = service?.parser?.version;
+  return <div className="platform-card"><div className="side-card-heading"><span className="section-kicker">YT-DLP ENGINE</span><span className={`live-dot ${service?.parser?.available ? '' : 'is-offline'}`} /></div><div className="mini-platforms"><span className="mini-platform coral">抖</span><span className="mini-platform rose">小</span><span className="mini-platform blue">B</span><span className="mini-platform ink">+</span></div><div className="platform-card-copy"><strong>{version ? `yt-dlp ${version}` : 'yt-dlp · JunVideo'}</strong><span>{extractorCount ? `${extractorCount.toLocaleString()} ${tx('extractorsReady')}` : tx('platformsHint')}</span></div></div>;
 }
 
 function ResultCardBase({ job, locale, tx, onRefresh }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
   if (!job) return <div className="result-empty"><div className="empty-art"><span /><span /><span /></div><h3>{tx('noResult')}</h3><p>{tx('noResultHint')}</p></div>;
   if (job.status === 'failed') return <div className="result-card result-failed"><div className="result-header"><div><span className="section-kicker">{tx('resultTitle')}</span><h2>{tx('failed')}</h2></div><span className="status-pill failed">!</span></div><p className="result-error">{job.errorMessage || tx('errorFallback')}</p><div className="failed-meta"><span>{friendlyPlatform(job.platform)}</span><span>{formatDate(job.createdAt, locale)}</span></div></div>;
   const options = job.options ?? [];
-  return <div className="result-card"><div className="result-header"><div><span className="section-kicker">{tx('resultTitle')}</span><h2>{job.title || tx('ready')}</h2></div><span className="status-pill"><Check size={14} />{tx('ready')}</span></div><div className="result-media"><div className="thumbnail-wrap">{job.thumbnailUrl ? <img src={job.thumbnailUrl} alt="" /> : <div className="thumbnail-fallback"><Play size={24} fill="currentColor" /></div>}<span className="thumbnail-platform">{friendlyPlatform(job.platform)}</span></div><div className="result-info"><div className="metadata-line"><span><Link2 size={13} />{tx('source')} · {friendlyPlatform(job.platform)}</span><span><Clock3 size={13} />{formatDuration(job.durationSeconds)}</span></div><p>{job.author || 'JunVideo'}</p><small>{formatDate(job.createdAt, locale)}</small></div></div><div className="download-options">{options.length > 0 ? options.map((option) => <DownloadOptionRow key={option.id} option={option} job={job} tx={tx} onRefresh={onRefresh} />) : <div className="option-placeholder"><span /><span /><span /></div>}</div></div>;
+  const groups = (['video', 'audio', 'subtitle', 'image'] as const)
+    .map((type) => ({ type, items: options.filter((option) => option.type === type) }))
+    .filter((group) => group.items.length > 0);
+  const views = formatCompactNumber(job.metadata?.viewCount, locale);
+  const likes = formatCompactNumber(job.metadata?.likeCount, locale);
+  return <div className="result-card">
+    <div className="result-header"><div><span className="section-kicker">{tx('resultTitle')}</span><h2>{job.title || tx('ready')}</h2></div><span className="status-pill"><Check size={14} />{tx('ready')}</span></div>
+    <div className="result-media"><div className="thumbnail-wrap">{job.thumbnailUrl ? <img src={job.thumbnailUrl} alt="" /> : <div className="thumbnail-fallback"><Play size={24} fill="currentColor" /></div>}<span className="thumbnail-platform">{friendlyPlatform(job.platform)}</span></div><div className="result-info"><div className="metadata-line"><span><Link2 size={13} />{tx('source')} · {friendlyPlatform(job.platform)}</span><span><Clock3 size={13} />{formatDuration(job.durationSeconds)}</span></div><p>{job.author || 'JunVideo'}</p><small>{formatDate(job.createdAt, locale)}</small><div className="result-facts">{views && <span>{views} {tx('views')}</span>}{likes && <span>{likes} {tx('likes')}</span>}<span>{options.filter((option) => option.type === 'video').length} {tx('videoFormats')}</span>{options.some((option) => option.type === 'subtitle') && <span>{options.filter((option) => option.type === 'subtitle').length} {tx('subtitles')}</span>}</div></div></div>
+    {job.description && <details className="source-description"><summary>{tx('sourceDescription')}</summary><p>{job.description}</p></details>}
+    <div className="download-options">{groups.length > 0 ? groups.map((group) => <section className="download-group" key={group.type}><div className="download-group-heading"><span>{tx(group.type === 'image' ? 'coverImage' : group.type === 'subtitle' ? 'captions' : group.type)}</span><small>{group.items.length}</small></div>{group.items.map((option) => <DownloadOptionRow key={option.id} option={option} job={job} tx={tx} onRefresh={onRefresh} />)}</section>) : <div className="option-placeholder"><span /><span /><span /></div>}</div>
+  </div>;
 }
 
 function ResultCard({ job, locale, tx, onRefresh }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
@@ -465,6 +486,7 @@ function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOpt
   useEffect(() => setDownloadError(false), [job.id, option.id]);
   const isAudio = option.type === 'audio' || option.ext === 'mp3' || option.ext === 'm4a';
   const isImage = option.type === 'image';
+  const isSubtitle = option.type === 'subtitle';
   const href = downloadUrl(job, option.id);
   async function startDownload() {
     if (downloadError) {
@@ -478,7 +500,7 @@ function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOpt
       const objectUrl = URL.createObjectURL(result.blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
-      anchor.download = result.filename || `${job.title || 'junvideo-media'}.${option.ext || (isAudio ? 'm4a' : 'mp4')}`;
+      anchor.download = result.filename || `${job.title || 'junvideo-media'}.${option.ext || (isAudio ? 'm4a' : isSubtitle ? 'vtt' : 'mp4')}`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -489,7 +511,7 @@ function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOpt
       setIsDownloading(false);
     }
   }
-  return <div className="download-row"><div className={`download-icon ${isImage ? 'image' : isAudio ? 'audio' : 'video'}`}>{isImage ? <FileImage size={18} /> : isAudio ? <FileAudio size={18} /> : <FileVideo size={18} />}</div><div className="download-copy"><strong>{isImage ? tx('coverImage') : option.label || (isAudio ? tx('audio') : tx('video'))}</strong><span>{[option.ext?.toUpperCase(), option.quality, option.size].filter(Boolean).join(' · ') || tx('mediaStream')}</span></div><button className="download-link" type="button" onClick={() => void startDownload()} disabled={isDownloading} title={downloadError ? tx('refreshParse') : href}>{isDownloading ? <span className="button-spinner" /> : <><span>{downloadError ? tx('refreshParse') : tx('download')}</span>{downloadError ? <CircleHelp size={14} /> : <ExternalLink size={14} />}</>}</button></div>;
+  return <div className="download-row"><div className={`download-icon ${isImage ? 'image' : isAudio ? 'audio' : isSubtitle ? 'subtitle' : 'video'}`}>{isImage ? <FileImage size={18} /> : isAudio ? <FileAudio size={18} /> : isSubtitle ? <FileText size={18} /> : <FileVideo size={18} />}</div><div className="download-copy"><strong>{isImage ? tx('coverImage') : option.label || (isAudio ? tx('audio') : isSubtitle ? tx('captions') : tx('video'))}</strong><span>{[option.ext?.toUpperCase(), option.quality, option.size].filter(Boolean).join(' · ') || tx('mediaStream')}</span></div><button className="download-link" type="button" onClick={() => void startDownload()} disabled={isDownloading} title={downloadError ? tx('refreshParse') : href}>{isDownloading ? <span className="button-spinner" /> : <><span>{downloadError ? tx('refreshParse') : tx('download')}</span>{downloadError ? <CircleHelp size={14} /> : <ExternalLink size={14} />}</>}</button></div>;
 }
 
 function StepCard({ number, icon, title, hint }: { number: string; icon: React.ReactNode; title: string; hint: string }) {
@@ -504,8 +526,10 @@ function HistoryView({ items, isLoading, locale, tx, onPick }: { items: ParseJob
   return <main className="subpage page-width"><div className="subpage-heading"><div><span className="eyebrow"><span className="eyebrow-dot" />04 / ARCHIVE</span><h1>{tx('navHistory')}</h1><p>{tx('emptyHistoryHint')}</p></div><button className="outline-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}><Link2 size={16} />{tx('navWorkbench')}</button></div><div className="history-list">{isLoading ? <div className="loading-block"><span className="button-spinner" />{tx('systemChecking')}</div> : items.length === 0 ? <div className="history-empty"><HistoryIcon size={28} /><h2>{tx('emptyHistory')}</h2><p>{tx('emptyHistoryHint')}</p></div> : items.map((item) => <button className="history-row" key={item.id} onClick={() => onPick(item)}><div className="history-thumb">{item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" /> : <Play size={18} fill="currentColor" />}</div><div className="history-main"><strong>{item.title || item.sourceUrl}</strong><span>{friendlyPlatform(item.platform)} · {formatDate(item.createdAt, locale)}</span></div><span className={`history-status ${item.status}`}>{item.status === 'completed' ? <Check size={14} /> : item.status === 'failed' ? '!' : <span className="button-spinner" />}</span><ChevronRight size={18} /></button>)}</div></main>;
 }
 
-function VipView({ user, isVip, locale, tx, onActivate, onLogin }: { user: User | null; isVip: boolean; locale: Locale; tx: (key: CopyKey) => string; onActivate: () => void; onLogin: () => void }) {
-  return <main className="vip-page page-width"><div className="vip-hero"><div><span className="eyebrow"><Sparkles size={15} />05 / MEMBERSHIP</span><h1>{tx('vipTitle')}</h1><p>{tx('vipSubtitle')}</p></div><div className="vip-spark"><Sparkles size={34} /><span>∞</span></div></div><div className="plan-card"><div className="plan-main"><div className="plan-icon"><Zap size={20} /></div><div><span className="section-kicker">JUNVIDEO VIP</span><h2>{tx('monthly')}</h2><p>{tx('devBillingNote')}</p></div></div><div className="plan-price"><strong>{tx('monthlyPrice')}</strong><span>{tx('monthlyUnit')}</span></div><div className="plan-features"><span><Check size={15} />{tx('vipFeatureOne')}</span><span><Check size={15} />{tx('vipFeatureTwo')}</span><span><Check size={15} />{tx('vipFeatureThree')}</span></div><button className={`primary-button plan-cta ${isVip ? 'is-active' : ''}`} onClick={onActivate}>{isVip ? <><Check size={17} />{tx('activated')}</> : <><Sparkles size={17} />{user ? tx('activate') : tx('signIn')}</>}</button></div><div className="vip-footnote"><ShieldCheck size={17} /><span>{tx('legal')}</span></div></main>;
+function VipView({ user, isVip, locale, tx, onActivate, onLogin, devVipEnabled }: { user: User | null; isVip: boolean; locale: Locale; tx: (key: CopyKey) => string; onActivate: () => void; onLogin: () => void; devVipEnabled: boolean }) {
+  const activate = () => user ? onActivate() : onLogin();
+  const disabled = Boolean(user && !isVip && !devVipEnabled);
+  return <main className="vip-page page-width"><div className="vip-hero"><div><span className="eyebrow"><Sparkles size={15} />05 / MEMBERSHIP</span><h1>{tx('vipTitle')}</h1><p>{devVipEnabled ? tx('vipSubtitleDev') : tx('vipSubtitle')}</p></div><div className="vip-spark"><Sparkles size={34} /><span>∞</span></div></div><div className="plan-card"><div className="plan-main"><div className="plan-icon"><Zap size={20} /></div><div><span className="section-kicker">JUNVIDEO VIP</span><h2>{tx('monthly')}</h2><p>{devVipEnabled ? tx('devBillingNote') : tx('publicBetaNote')}</p></div></div><div className="plan-price"><strong>{tx('monthlyPrice')}</strong><span>{tx('monthlyUnit')}</span></div><div className="plan-features"><span><Check size={15} />{tx('vipFeatureOne')}</span><span><Check size={15} />{tx('vipFeatureTwo')}</span><span><Check size={15} />{tx('vipFeatureThree')}</span></div><button className={`primary-button plan-cta ${isVip ? 'is-active' : ''}`} onClick={activate} disabled={disabled}>{isVip ? <><Check size={17} />{tx('activated')}</> : <><Sparkles size={17} />{user ? devVipEnabled ? tx('activate') : tx('comingSoon') : tx('signIn')}</>}</button></div><div className="vip-footnote"><ShieldCheck size={17} /><span>{tx('legal')}</span></div></main>;
 }
 
 function AuthDialog({ mode, locale, tx, onClose, onSwitch, onSubmit }: { mode: 'login' | 'register'; locale: Locale; tx: (key: CopyKey) => string; onClose: () => void; onSwitch: () => void; onSubmit: (mode: 'login' | 'register', values: { name: string; email: string; password: string }) => Promise<void> }) {

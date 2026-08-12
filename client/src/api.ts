@@ -1,6 +1,7 @@
 import type { ApiHealth, Locale, ParseJob, TranscriptResult, Usage, User } from './types';
 
-const API_BASE = '/api';
+const configuredApiBase = String(import.meta.env.VITE_API_BASE_URL ?? '').trim();
+const API_BASE = configuredApiBase ? configuredApiBase.replace(/\/+$/u, '') : '/api';
 const TOKEN_KEY = 'junvideo_token';
 
 type ApiEnvelope<T> = T | { data: T } | { user: User; token: string } | { job: ParseJob };
@@ -83,6 +84,19 @@ function normalizeStatus(value: unknown): ParseJob['status'] {
   return 'processing';
 }
 
+function formatBytes(value: unknown): string | null {
+  const bytes = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return null;
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let amount = bytes;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  return `${amount >= 100 || unit === 0 ? Math.round(amount) : amount.toFixed(1)} ${units[unit]}`;
+}
+
 function normalizeJob(payload: unknown): ParseJob {
   const raw = ((payload as { job?: Record<string, unknown> })?.job ?? payload) as Record<string, unknown>;
   const videoFormats = Array.isArray(raw.videoFormats) ? raw.videoFormats : [];
@@ -90,12 +104,23 @@ function normalizeJob(payload: unknown): ParseJob {
   const metadata = raw.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata)
     ? raw.metadata as Record<string, unknown>
     : {};
+  const subtitleFormats = Array.isArray(raw.subtitleFormats)
+    ? raw.subtitleFormats
+    : Array.isArray(metadata.subtitleFormats)
+      ? metadata.subtitleFormats
+      : [];
   const thumbnailUrl = raw.thumbnailUrl == null && raw.thumbnail_url == null
     ? null
     : String(raw.thumbnailUrl ?? raw.thumbnail_url);
-  const toOption = (format: Record<string, unknown>, type: 'video' | 'audio') => ({
+  const toOption = (format: Record<string, unknown>, type: 'video' | 'audio' | 'subtitle') => ({
     id: String(format.id ?? `${type}-${Math.random().toString(36).slice(2)}`),
-    label: String(format.qualityLabel ?? (typeof format.height === 'number' && format.height > 0 ? `${format.height}p` : type === 'video' ? 'Video' : 'Audio')),
+    label: String(format.qualityLabel ?? (typeof format.height === 'number' && format.height > 0
+      ? `${format.height}p`
+      : type === 'video'
+        ? 'Video'
+        : type === 'audio'
+          ? 'Audio'
+          : String(format.language ?? 'Subtitle'))),
     type,
     ext: format.ext ? String(format.ext) : undefined,
     quality: format.qualityLabel
@@ -105,7 +130,7 @@ function normalizeJob(payload: unknown): ParseJob {
         : typeof format.bitrateKbps === 'number' && format.bitrateKbps > 0
           ? `${Math.round(format.bitrateKbps)} kbps`
           : undefined,
-    size: format.filesize ? String(format.filesize) : null,
+    size: formatBytes(format.filesize),
     url: format.url ? String(format.url) : undefined,
   });
   const error = raw.error as Record<string, unknown> | null | undefined;
@@ -118,6 +143,7 @@ function normalizeJob(payload: unknown): ParseJob {
     status: normalizeStatus(raw.status),
     title: raw.title == null ? null : String(raw.title),
     author: raw.uploader == null ? null : String(raw.uploader),
+    description: raw.description == null ? null : String(raw.description),
     thumbnailUrl,
     durationSeconds: typeof raw.durationSeconds === 'number' ? raw.durationSeconds : null,
     createdAt: String(raw.createdAt ?? raw.acceptedAt ?? new Date().toISOString()),
@@ -128,6 +154,7 @@ function normalizeJob(payload: unknown): ParseJob {
     options: [
       ...videoFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value) => toOption(value, 'video')),
       ...audioFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value) => toOption(value, 'audio')),
+      ...subtitleFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value) => toOption(value, 'subtitle')),
       ...(thumbnailUrl ? [{
         id: 'thumbnail',
         label: 'Cover image',
@@ -217,13 +244,26 @@ export async function health() {
       mode: String(parser.mode ?? 'unknown'),
       available: Boolean(parser.available),
       binary: parser.message ? String(parser.message) : null,
+      version: parser.version ? String(parser.version) : null,
+      extractorCount: typeof parser.extractorCount === 'number' ? parser.extractorCount : null,
+    } : undefined,
+    features: payload.features && typeof payload.features === 'object' ? {
+      transcription: Boolean((payload.features as Record<string, unknown>).transcription),
+      devVip: Boolean((payload.features as Record<string, unknown>).devVip),
+      subtitles: Boolean((payload.features as Record<string, unknown>).subtitles),
     } : undefined,
   } satisfies ApiHealth;
 }
 
 export function downloadUrl(job: ParseJob, optionId: string) {
   const option = job.options?.find((item) => item.id === optionId);
-  const kind = option?.type === 'audio' ? 'audio' : option?.type === 'image' ? 'image' : 'video';
+  const kind = option?.type === 'audio'
+    ? 'audio'
+    : option?.type === 'image'
+      ? 'image'
+      : option?.type === 'subtitle'
+        ? 'subtitle'
+        : 'video';
   return `${API_BASE}/proxy/${encodeURIComponent(job.id)}/${kind}?formatId=${encodeURIComponent(optionId)}`;
 }
 

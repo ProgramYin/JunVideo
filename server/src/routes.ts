@@ -14,11 +14,25 @@ import {
   type ParseJobRow,
 } from "./jobs.js";
 import { ParserService, parseRequestFromPreflight } from "./parser.js";
-import { cleanupPreparedMedia, downloadAudioWithYtDlp, downloadVideoWithYtDlp, type PreparedMediaFile } from "./media-download.js";
+import {
+  cleanupPreparedMedia,
+  downloadAudioWithYtDlp,
+  downloadSubtitleWithYtDlp,
+  downloadVideoWithYtDlp,
+  type PreparedMediaFile,
+} from "./media-download.js";
 import { extractUrlFromText, isSafeRemoteHttpUrl, platformCatalog, preflightUrl } from "./platform.js";
 import { TranscriptService } from "./transcription.js";
 import { getUsageSnapshot, reserveParseAttempt } from "./usage.js";
-import { credentialsSchema, parseBody, positiveLimit, rawInputFromBody, transcriptionBodySchema, uuidSchema } from "./validation.js";
+import {
+  credentialsSchema,
+  parseBody,
+  positiveLimit,
+  rawInputFromBody,
+  registrationSchema,
+  transcriptionBodySchema,
+  uuidSchema,
+} from "./validation.js";
 
 function ownedJobQuery(): string {
   return `SELECT id, user_id, source_url, canonical_url, platform, status, title, description,
@@ -41,9 +55,9 @@ function jobIdFromRequest(request: Request): string {
   return parsed.data;
 }
 
-function mediaKind(value: unknown): "video" | "audio" | "image" {
-  if (value === "video" || value === "audio" || value === "image") return value;
-  throw new AppError(400, "INVALID_MEDIA_KIND", "kind must be either video, audio, or image.");
+function mediaKind(value: unknown): "video" | "audio" | "image" | "subtitle" {
+  if (value === "video" || value === "audio" || value === "image" || value === "subtitle") return value;
+  throw new AppError(400, "INVALID_MEDIA_KIND", "kind must be video, audio, image, or subtitle.");
 }
 
 function requestedFormatId(request: Request): string | undefined {
@@ -137,6 +151,12 @@ function mergedVideoFilename(job: ParseJobRow, format: ReturnType<typeof selectM
 
 function preparedAudioFilename(job: ParseJobRow, format: ReturnType<typeof selectMediaFormat>): string {
   return safeDownloadFilename(job.title, "audio", format);
+}
+
+function preparedSubtitleFilename(job: ParseJobRow, format: ReturnType<typeof selectMediaFormat>): string {
+  const language = format.language?.replace(/[^A-Za-z0-9._-]/gu, "-").slice(0, 40);
+  const title = language ? `${job.title ?? "junvideo"}-${language}` : job.title;
+  return safeDownloadFilename(title, "subtitle", format);
 }
 
 function streamPreparedMedia(
@@ -267,14 +287,19 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
         ? { status: "up", latencyMs: database.latencyMs }
         : { status: "down", message: "Database unavailable." },
       parser: parserStatus,
+      features: {
+        transcription: config.transcriptionEnabled,
+        devVip: config.devVipEnabled,
+        subtitles: true,
+      },
     });
   });
   router.get("/health", healthHandler);
   router.get("/healthz", healthHandler);
 
   router.post("/auth/register", asyncHandler(async (request, response) => {
-    const body = parseBody(credentialsSchema, request.body);
-    const user = await createUser(body.email, body.password);
+    const body = parseBody(registrationSchema, request.body);
+    const user = await createUser(body.name, body.email, body.password);
     sendAuthResponse(response, user, 201);
   }));
 
@@ -426,6 +451,11 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
       streamPreparedMedia(prepared, response, next, preparedAudioFilename(job, format));
       return;
     }
+    if (kind === "subtitle" && format.downloadMode !== "direct") {
+      const prepared = await downloadSubtitleWithYtDlp(job.canonical_url, format, config);
+      streamPreparedMedia(prepared, response, next, preparedSubtitleFilename(job, format));
+      return;
+    }
     response.redirect(302, format.url);
   }));
 
@@ -445,6 +475,11 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
     if (kind === "audio" && format.downloadMode !== "direct") {
       const prepared = await downloadAudioWithYtDlp(job.canonical_url, format, config);
       streamPreparedMedia(prepared, response, next, preparedAudioFilename(job, format));
+      return;
+    }
+    if (kind === "subtitle" && format.downloadMode !== "direct") {
+      const prepared = await downloadSubtitleWithYtDlp(job.canonical_url, format, config);
+      streamPreparedMedia(prepared, response, next, preparedSubtitleFilename(job, format));
       return;
     }
     const remote = await fetchRemoteMedia(format.url, format.httpHeaders);
@@ -479,6 +514,7 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
     const currentUser = authenticatedUser(request);
     const result = await query<{
       id: string;
+      name: string;
       email: string;
       password_hash: string;
       is_vip: boolean;
@@ -491,7 +527,7 @@ export function createApiRouter(parser = new ParserService(), transcriptService 
               vip_activated_at = COALESCE(vip_activated_at, NOW()),
               updated_at = NOW()
         WHERE id = $1
-        RETURNING id, email, password_hash, is_vip, vip_activated_at, created_at, updated_at`,
+        RETURNING id, name, email, password_hash, is_vip, vip_activated_at, created_at, updated_at`,
       [currentUser.id],
     );
     const row = result.rows[0];

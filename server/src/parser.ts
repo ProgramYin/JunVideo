@@ -43,6 +43,12 @@ export interface MediaFormat {
    * request ask yt-dlp for a fresh signed URL.
    */
   audioFormatId?: string | null;
+  /** Distinguishes downloadable captions from ordinary A/V streams. */
+  mediaType?: "video" | "audio" | "subtitle";
+  /** yt-dlp subtitle language key, retained for a fresh subtitle download. */
+  language?: string | null;
+  /** True when the subtitle track came from automatic_captions. */
+  automatic?: boolean;
   httpHeaders: Record<string, string>;
 }
 
@@ -57,6 +63,7 @@ export interface ParseResult {
   durationSeconds: number | null;
   videoFormats: MediaFormat[];
   audioFormats: MediaFormat[];
+  subtitleFormats: MediaFormat[];
   metadata: Record<string, unknown>;
   mock: boolean;
 }
@@ -72,6 +79,8 @@ export interface ParserAvailability {
   mode: AppConfig["parserMode"];
   available: boolean;
   message: string;
+  version?: string;
+  extractorCount?: number;
 }
 
 export interface ParserAdapter {
@@ -292,8 +301,91 @@ function mediaFormatFromRaw(raw: Record<string, unknown>, index: number): MediaF
     // A direct muxed format is already playable. Separate video/audio formats
     // are re-resolved and merged through yt-dlp/ffmpeg at download time.
     requiresMuxing: hasVideo && !hasAudio,
+    mediaType: hasVideo ? "video" : "audio",
     httpHeaders: safeMediaHeaders(raw.http_headers),
   };
+}
+
+const SUBTITLE_EXT_PRIORITY = ["vtt", "srt", "ass", "ttml", "srv3", "srv2", "srv1", "json3"] as const;
+const DISPLAY_SUBTITLE_LIMIT = 16;
+
+function subtitleMimeType(ext: string): string {
+  if (ext === "vtt") return "text/vtt";
+  if (ext === "srt" || ext === "ass") return "text/plain";
+  if (ext === "ttml") return "application/ttml+xml";
+  return "application/json";
+}
+
+function subtitleFormatEntries(info: Record<string, unknown>): MediaFormat[] {
+  const formats: MediaFormat[] = [];
+  const languagesWithManualTracks = new Set<string>();
+
+  const collect = (value: unknown, automatic: boolean): void => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    for (const [rawLanguage, rawTracks] of Object.entries(value as Record<string, unknown>)) {
+      const language = rawLanguage.trim().slice(0, 80);
+      if (!language || !Array.isArray(rawTracks) || (automatic && languagesWithManualTracks.has(language))) continue;
+      const candidates = rawTracks
+        .filter((track): track is Record<string, unknown> => Boolean(track && typeof track === "object" && !Array.isArray(track)))
+        .map((track) => ({
+          track,
+          url: safeText(track.url),
+          ext: (safeText(track.ext, "vtt") ?? "vtt").toLowerCase().replace(/[^a-z0-9]/gu, "").slice(0, 12) || "vtt",
+        }))
+        .filter((track) => Boolean(track.url && isSafeRemoteHttpUrl(track.url)))
+        .sort((a, b) => {
+          const aPriority = SUBTITLE_EXT_PRIORITY.indexOf(a.ext as typeof SUBTITLE_EXT_PRIORITY[number]);
+          const bPriority = SUBTITLE_EXT_PRIORITY.indexOf(b.ext as typeof SUBTITLE_EXT_PRIORITY[number]);
+          return (aPriority < 0 ? 999 : aPriority) - (bPriority < 0 ? 999 : bPriority);
+        });
+      const selected = candidates[0];
+      if (!selected?.url) continue;
+      if (!automatic) languagesWithManualTracks.add(language);
+      const slug = language.replace(/[^A-Za-z0-9._-]/gu, "-").replace(/-+/gu, "-").slice(0, 48) || "track";
+      const name = safeText(selected.track.name);
+      formats.push({
+        id: `subtitle-${automatic ? "auto" : "manual"}-${slug}-${formats.length}`.slice(0, 100),
+        url: selected.url,
+        ext: selected.ext,
+        mimeType: subtitleMimeType(selected.ext),
+        width: null,
+        height: null,
+        fps: null,
+        bitrateKbps: null,
+        filesize: null,
+        qualityLabel: name && name.toLowerCase() !== language.toLowerCase() ? `${language} / ${name}` : language,
+        videoCodec: null,
+        audioCodec: null,
+        hasVideo: false,
+        hasAudio: false,
+        requiresMuxing: false,
+        downloadMode: "yt-dlp",
+        mediaType: "subtitle",
+        language,
+        automatic,
+        httpHeaders: safeMediaHeaders(selected.track.http_headers),
+      });
+      if (formats.length >= 200) return;
+    }
+  };
+
+  collect(info.subtitles, false);
+  collect(info.automatic_captions, true);
+  return formats;
+}
+
+function subtitleDisplayRank(format: MediaFormat): number {
+  const language = format.language?.toLowerCase() ?? "";
+  if (!format.automatic) return 0;
+  if (/^(?:zh|zh-|en|en-|ja|ja-|ko|ko-)/u.test(language)) return 1;
+  return 2;
+}
+
+export function selectDisplaySubtitleFormats(formats: MediaFormat[]): MediaFormat[] {
+  return [...formats]
+    .sort((a, b) => subtitleDisplayRank(a) - subtitleDisplayRank(b)
+      || (a.language ?? "").localeCompare(b.language ?? "", "en"))
+    .slice(0, DISPLAY_SUBTITLE_LIMIT);
 }
 
 function requestedFormatEntries(info: Record<string, unknown>): unknown[] {
@@ -420,6 +512,8 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
     .filter((format) => format.hasAudio && !format.hasVideo)
     .sort((a, b) => (b.bitrateKbps ?? 0) - (a.bitrateKbps ?? 0))
     .slice(0, 20);
+  const allSubtitleFormats = subtitleFormatEntries(info);
+  const subtitleFormats = selectDisplaySubtitleFormats(allSubtitleFormats);
 
   const duration = safeNumber(info.duration);
 
@@ -434,15 +528,26 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
     durationSeconds: duration === null ? null : Math.round(duration),
     videoFormats,
     audioFormats,
+    subtitleFormats,
     metadata: {
       extractor: safeText(info.extractor),
+      extractorKey: safeText(info.extractor_key),
       webpageUrl: safeText(info.webpage_url),
       liveStatus: safeText(info.live_status),
+      uploadDate: safeText(info.upload_date),
+      releaseTimestamp: safeNumber(info.release_timestamp),
+      viewCount: safeNumber(info.view_count),
+      likeCount: safeNumber(info.like_count),
+      commentCount: safeNumber(info.comment_count),
       formatCount: formats.length,
       allVideoFormatCount: allVideoFormats.length,
       displayVideoFormatCount: videoFormats.length,
+      subtitleFormatCount: allSubtitleFormats.length,
+      displaySubtitleFormatCount: subtitleFormats.length,
       formatPolicy: "highest-fps-per-resolution",
       allVideoFormats,
+      allSubtitleFormats,
+      subtitleFormats,
     },
     mock: false,
   };
@@ -461,7 +566,13 @@ export function formatSelectorFor(format: MediaFormat): string | null {
 
 export class YtDlpAdapter implements ParserAdapter {
   public readonly name = "yt-dlp";
-  private availabilityCache: { checkedAt: number; available: boolean; message: string } | null = null;
+  private availabilityCache: {
+    checkedAt: number;
+    available: boolean;
+    message: string;
+    version?: string;
+    extractorCount?: number;
+  } | null = null;
 
   public constructor(private readonly appConfig: AppConfig = config) {}
 
@@ -481,19 +592,32 @@ export class YtDlpAdapter implements ParserAdapter {
     }
   }
 
-  public async available(): Promise<{ available: boolean; message: string }> {
+  public async available(): Promise<{
+    available: boolean;
+    message: string;
+    version?: string;
+    extractorCount?: number;
+  }> {
     if (this.availabilityCache && Date.now() - this.availabilityCache.checkedAt < AVAILABILITY_CACHE_MS) {
-      return this.availabilityCache;
+      const { available, message, version, extractorCount } = this.availabilityCache;
+      return { available, message, version, extractorCount };
     }
 
     try {
-      const result = await runProcess(this.appConfig.ytdlpPath, ["--version"], 5_000, 128 * 1024);
+      const [result, extractors] = await Promise.all([
+        runProcess(this.appConfig.ytdlpPath, ["--version"], 8_000, 128 * 1024),
+        runProcess(this.appConfig.ytdlpPath, ["--list-extractors"], 15_000, 2 * 1024 * 1024).catch(() => null),
+      ]);
       const available = result.exitCode === 0;
+      const version = available ? result.stdout.trim().slice(0, 50) || undefined : undefined;
+      const extractorCount = extractors?.exitCode === 0
+        ? extractors.stdout.split(/\r?\n/gu).filter((line) => line.trim()).length
+        : undefined;
       const message = available
-        ? `yt-dlp is available${result.stdout.trim() ? ` (${result.stdout.trim().slice(0, 50)})` : ""}.`
+        ? `yt-dlp is available${version ? ` (${version})` : ""}${extractorCount ? ` with ${extractorCount} extractors` : ""}.`
         : "yt-dlp was found but did not return a usable version.";
-      this.availabilityCache = { checkedAt: Date.now(), available, message };
-      return this.availabilityCache;
+      this.availabilityCache = { checkedAt: Date.now(), available, message, version, extractorCount };
+      return { available, message, version, extractorCount };
     } catch (error) {
       const message = processErrorMessage(error);
       const result = {
@@ -502,7 +626,7 @@ export class YtDlpAdapter implements ParserAdapter {
         message: `yt-dlp is unavailable: ${message}`,
       };
       this.availabilityCache = result;
-      return result;
+      return { available: result.available, message: result.message };
     }
   }
 
@@ -666,7 +790,8 @@ export class MockParserAdapter implements ParserAdapter {
           httpHeaders: {},
         },
       ],
-      metadata: { parser: "mock", sourceHost: request.platform.hostname },
+      subtitleFormats: [],
+      metadata: { parser: "mock", sourceHost: request.platform.hostname, subtitleFormats: [], allSubtitleFormats: [] },
       mock: true,
     };
   }

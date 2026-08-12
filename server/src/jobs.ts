@@ -41,6 +41,7 @@ export interface ParseJobView {
   durationSeconds: number | null;
   videoFormats: MediaFormat[];
   audioFormats: MediaFormat[];
+  subtitleFormats: MediaFormat[];
   metadata: Record<string, unknown>;
   error: { code: string; message: string; action?: string } | null;
   acceptedAt: string;
@@ -86,6 +87,7 @@ function objectValue(value: unknown): Record<string, unknown> {
 }
 
 export function toParseJobView(row: ParseJobRow): ParseJobView {
+  const metadata = objectValue(row.metadata);
   const error = row.error_code && row.error_message
     ? {
         code: row.error_code,
@@ -107,7 +109,8 @@ export function toParseJobView(row: ParseJobRow): ParseJobView {
     durationSeconds: row.duration_seconds,
     videoFormats: arrayValue<MediaFormat>(row.video_formats),
     audioFormats: arrayValue<MediaFormat>(row.audio_formats),
-    metadata: objectValue(row.metadata),
+    subtitleFormats: arrayValue<MediaFormat>(metadata.subtitleFormats),
+    metadata,
     error,
     acceptedAt: iso(row.accepted_at) as string,
     createdAt: iso(row.created_at) as string,
@@ -121,7 +124,7 @@ export function formatExtension(format: MediaFormat, fallback: string): string {
   return ext || fallback;
 }
 
-export function safeDownloadFilename(title: string | null, kind: "video" | "audio" | "image", format: MediaFormat): string {
+export function safeDownloadFilename(title: string | null, kind: "video" | "audio" | "image" | "subtitle", format: MediaFormat): string {
   const fallback = `junvideo-${kind}`;
   const cleaned = (title ?? fallback)
     .normalize("NFKC")
@@ -130,7 +133,7 @@ export function safeDownloadFilename(title: string | null, kind: "video" | "audi
     .trim()
     .slice(0, 150);
   const base = cleaned || fallback;
-  return `${base}.${formatExtension(format, kind === "video" ? "mp4" : kind === "audio" ? "m4a" : "jpg")}`;
+  return `${base}.${formatExtension(format, kind === "video" ? "mp4" : kind === "audio" ? "m4a" : kind === "subtitle" ? "vtt" : "jpg")}`;
 }
 
 function thumbnailFormat(row: ParseJobRow): MediaFormat {
@@ -171,7 +174,7 @@ function thumbnailFormat(row: ParseJobRow): MediaFormat {
 
 export function selectMediaFormat(
   row: ParseJobRow,
-  kind: "video" | "audio" | "image",
+  kind: "video" | "audio" | "image" | "subtitle",
   requestedId?: string,
 ): MediaFormat {
   if (kind === "image") {
@@ -180,7 +183,9 @@ export function selectMediaFormat(
     }
     return thumbnailFormat(row);
   }
-  const formats = [...arrayValue<MediaFormat>(kind === "video" ? row.video_formats : row.audio_formats)];
+  const formats = kind === "subtitle"
+    ? [...arrayValue<MediaFormat>(objectValue(row.metadata).allSubtitleFormats)]
+    : [...arrayValue<MediaFormat>(kind === "video" ? row.video_formats : row.audio_formats)];
   if (kind === "video") {
     const remembered = arrayValue<MediaFormat>(objectValue(row.metadata).allVideoFormats);
     const displayedIds = new Set(formats.map((format) => format.id));
@@ -216,6 +221,11 @@ export function parseResultToColumns(result: ParseResult): {
     durationSeconds: result.durationSeconds,
     videoFormats: result.videoFormats,
     audioFormats: result.audioFormats,
-    metadata: { ...result.metadata, mock: result.mock },
+    metadata: {
+      ...result.metadata,
+      subtitleFormats: result.subtitleFormats,
+      allSubtitleFormats: result.metadata.allSubtitleFormats ?? result.subtitleFormats,
+      mock: result.mock,
+    },
   };
 }

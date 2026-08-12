@@ -1,8 +1,3 @@
--- JunVideo MVP database schema.
--- The application only stores metadata and short-lived source URLs returned by
--- the parser. It does not attempt to defeat login walls, paywalls, DRM, or
--- other platform access controls.
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -20,26 +15,6 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT users_password_hash_present CHECK (char_length(password_hash) > 0),
     CONSTRAINT users_vip_timestamp CHECK (is_vip OR vip_activated_at IS NULL)
 );
-
--- Upgrade databases created before account names were persisted. Keeping the
--- schema idempotent lets both local setup and Supabase migrations reuse it.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT;
-UPDATE users
-   SET name = left(COALESCE(NULLIF(split_part(email, '@', 1), ''), 'JunVideo'), 60)
- WHERE name IS NULL OR btrim(name) = '';
-ALTER TABLE users ALTER COLUMN name SET NOT NULL;
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-         WHERE conname = 'users_name_length'
-           AND conrelid = 'users'::regclass
-    ) THEN
-        ALTER TABLE users
-            ADD CONSTRAINT users_name_length CHECK (char_length(btrim(name)) BETWEEN 1 AND 60);
-    END IF;
-END
-$$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email));
 CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC);

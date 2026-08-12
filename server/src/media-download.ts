@@ -75,6 +75,32 @@ export function buildYtDlpDownloadArgs(
   ];
 }
 
+export function buildYtDlpSubtitleArgs(
+  sourceUrl: string,
+  format: MediaFormat,
+  outputTemplate: string,
+  appConfig: YtDlpDownloadConfig,
+): string[] {
+  const language = format.language?.trim();
+  if (format.mediaType !== "subtitle" || !language || !/^[A-Za-z0-9._-]{1,80}$/u.test(language)) {
+    throw new AppError(422, "SUBTITLE_FORMAT_UNAVAILABLE", "The selected subtitle track does not contain a safe yt-dlp language key.", {
+      action: "Run the parse again so JunVideo can refresh the available subtitle tracks.",
+    });
+  }
+  const ext = format.ext?.toLowerCase().replace(/[^a-z0-9]/gu, "").slice(0, 12) || "vtt";
+  return [
+    ...downloadCommonArgs(appConfig),
+    "--skip-download",
+    format.automatic ? "--write-auto-subs" : "--write-subs",
+    "--sub-langs", language,
+    "--sub-format", `${ext}/best`,
+    "--no-part",
+    "--no-mtime",
+    "--output", outputTemplate,
+    "--", sourceUrl,
+  ];
+}
+
 async function removeWorkDir(workDir: string): Promise<void> {
   await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
 }
@@ -181,6 +207,62 @@ export function downloadAudioWithYtDlp(
   appConfig: AppConfig,
 ): Promise<PreparedMediaFile> {
   return downloadMediaWithYtDlp(sourceUrl, format, appConfig, "audio");
+}
+
+function subtitleContentType(extension: string): string {
+  if (extension === "vtt") return "text/vtt; charset=utf-8";
+  if (extension === "ttml") return "application/ttml+xml; charset=utf-8";
+  if (extension === "json" || extension === "json3") return "application/json; charset=utf-8";
+  return "text/plain; charset=utf-8";
+}
+
+export async function downloadSubtitleWithYtDlp(
+  sourceUrl: string,
+  format: MediaFormat,
+  appConfig: AppConfig,
+): Promise<PreparedMediaFile> {
+  const workDir = await mkdtemp(join(tmpdir(), "junvideo-subtitle-"));
+  const outputTemplate = join(workDir, "subtitle.%(ext)s");
+  const args = buildYtDlpSubtitleArgs(sourceUrl, format, outputTemplate, appConfig);
+
+  try {
+    let result;
+    try {
+      result = await runProcess(appConfig.ytdlpPath, args, appConfig.mediaDownloadTimeoutMs, 4 * 1024 * 1024);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/enoent|not found|cannot find/i.test(message)) {
+        throw new AppError(503, "SUBTITLE_DOWNLOAD_UNAVAILABLE", `yt-dlp could not be started for this subtitle download: ${message}`);
+      }
+      throw new AppError(502, "SUBTITLE_DOWNLOAD_FAILED", "yt-dlp could not download this subtitle track.", {
+        action: "Run the parse again and retry.",
+        details: { cause: message.slice(0, 500) },
+      });
+    }
+
+    if (result.exitCode !== 0) {
+      throw new AppError(502, "SUBTITLE_DOWNLOAD_FAILED", "yt-dlp could not refresh this subtitle track.", {
+        action: "Run the parse again and retry.",
+        details: { exitCode: result.exitCode, diagnostic: result.stderr.trim().slice(-2_000) },
+      });
+    }
+
+    const files = await readdir(workDir);
+    for (const file of files) {
+      if (file.endsWith(".part") || file.endsWith(".ytdl")) continue;
+      const filePath = join(workDir, file);
+      const fileStat = await stat(filePath).catch(() => null);
+      if (!fileStat?.isFile() || fileStat.size <= 0) continue;
+      const extension = file.split(".").pop()?.toLowerCase() || format.ext || "vtt";
+      return { filePath, workDir, contentType: subtitleContentType(extension), extension };
+    }
+    throw new AppError(502, "SUBTITLE_DOWNLOAD_EMPTY", "yt-dlp completed without producing a subtitle file.", {
+      action: "Run the parse again and retry.",
+    });
+  } catch (error) {
+    await removeWorkDir(workDir);
+    throw error;
+  }
 }
 
 // Kept as a small compatibility alias for callers that used the initial

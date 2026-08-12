@@ -1,0 +1,12 @@
+.git
+.agents
+.runtime
+.env
+.env.*
+!.env.example
+bin
+dist
+node_modules
+supabase/.temp
+*.log
+测试用例.txt

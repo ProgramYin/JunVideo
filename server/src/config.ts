@@ -9,6 +9,7 @@ const isProduction = process.env.NODE_ENV === "production";
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+  SERVE_CLIENT: z.enum(["true", "false"]).optional(),
   DATABASE_URL: z.string().min(1).default("postgresql://postgres:postgres@localhost:5432/junvideo"),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
   DATABASE_SSL: z.enum(["true", "false"]).default("false"),
@@ -66,6 +67,7 @@ const parserMode: ParserMode = parsedEnv.PARSER_MODE ?? "yt-dlp";
 const devVipEnabled = parsedEnv.DEV_VIP_ENABLED
   ? parsedEnv.DEV_VIP_ENABLED === "true"
   : !isProduction;
+const serveClient = parsedEnv.SERVE_CLIENT ? parsedEnv.SERVE_CLIENT === "true" : isProduction;
 const ytdlpCookiesFile = parsedEnv.YTDLP_COOKIES_FILE?.trim() || undefined;
 const ytdlpCookiesFromBrowser = parsedEnv.YTDLP_COOKIES_FROM_BROWSER?.trim() || undefined;
 const pythonPath = parsedEnv.PYTHON_PATH?.trim() || "python";
@@ -104,6 +106,7 @@ export const config = {
   nodeEnv: parsedEnv.NODE_ENV,
   isProduction,
   port: parsedEnv.PORT,
+  serveClient,
   databaseUrl: parsedEnv.DATABASE_URL,
   databasePoolMax: parsedEnv.DATABASE_POOL_MAX,
   databaseSsl: parsedEnv.DATABASE_SSL === "true",

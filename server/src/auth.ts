@@ -10,6 +10,7 @@ const PASSWORD_SALT_ROUNDS = 12;
 
 export interface UserRow {
   id: string;
+  name: string;
   email: string;
   password_hash: string;
   is_vip: boolean;
@@ -20,6 +21,7 @@ export interface UserRow {
 
 export interface AuthUser {
   id: string;
+  name: string;
   email: string;
   isVip: boolean;
   vipActivatedAt: string | null;
@@ -42,6 +44,7 @@ declare global {
 export function toPublicUser(row: UserRow): AuthUser {
   return {
     id: row.id,
+    name: row.name,
     email: row.email,
     isVip: row.is_vip,
     vipActivatedAt: row.vip_activated_at,
@@ -79,7 +82,7 @@ export function verifyAccessToken(token: string): AccessTokenClaims {
 
 export async function findUserByEmail(email: string): Promise<UserRow | null> {
   const result = await query<UserRow>(
-    `SELECT id, email, password_hash, is_vip, vip_activated_at, created_at, updated_at
+    `SELECT id, name, email, password_hash, is_vip, vip_activated_at, created_at, updated_at
        FROM users
       WHERE email = $1
       LIMIT 1`,
@@ -90,7 +93,7 @@ export async function findUserByEmail(email: string): Promise<UserRow | null> {
 
 export async function findUserById(id: string): Promise<UserRow | null> {
   const result = await query<UserRow>(
-    `SELECT id, email, password_hash, is_vip, vip_activated_at, created_at, updated_at
+    `SELECT id, name, email, password_hash, is_vip, vip_activated_at, created_at, updated_at
        FROM users
       WHERE id = $1
       LIMIT 1`,
@@ -99,14 +102,14 @@ export async function findUserById(id: string): Promise<UserRow | null> {
   return result.rows[0] ?? null;
 }
 
-export async function createUser(email: string, password: string): Promise<UserRow> {
+export async function createUser(name: string, email: string, password: string): Promise<UserRow> {
   const passwordHash = await hashPassword(password);
   try {
     const result = await query<UserRow>(
-      `INSERT INTO users (email, password_hash)
-       VALUES ($1, $2)
-       RETURNING id, email, password_hash, is_vip, vip_activated_at, created_at, updated_at`,
-      [email, passwordHash],
+      `INSERT INTO users (name, email, password_hash)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, email, password_hash, is_vip, vip_activated_at, created_at, updated_at`,
+      [name, email, passwordHash],
     );
     return result.rows[0];
   } catch (error) {
@@ -165,4 +168,3 @@ export function sendAuthResponse(response: Response, row: UserRow, statusCode = 
 export function unusedNext(_request: Request, _response: Response, _next: NextFunction): void {
   // Kept as a named no-op hook for integrations that need to compose middleware.
 }
-

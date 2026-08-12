@@ -23,7 +23,7 @@ export interface Usage {
 export interface DownloadOption {
   id: string;
   label: string;
-  type: 'video' | 'audio' | 'image' | 'unknown';
+  type: 'video' | 'audio' | 'image' | 'subtitle' | 'unknown';
   ext?: string;
   quality?: string;
   size?: string | null;
@@ -40,6 +40,7 @@ export interface ParseJob {
   status: 'queued' | 'processing' | 'completed' | 'failed';
   title?: string | null;
   author?: string | null;
+  description?: string | null;
   thumbnailUrl?: string | null;
   durationSeconds?: number | null;
   createdAt: string;
@@ -61,5 +62,16 @@ export interface TranscriptResult {
 export interface ApiHealth {
   ok: boolean;
   database: 'ok' | 'unavailable' | 'not_configured';
-  parser?: { mode: string; available: boolean; binary?: string | null };
+  parser?: {
+    mode: string;
+    available: boolean;
+    binary?: string | null;
+    version?: string | null;
+    extractorCount?: number | null;
+  };
+  features?: {
+    transcription: boolean;
+    devVip: boolean;
+    subtitles: boolean;
+  };
 }

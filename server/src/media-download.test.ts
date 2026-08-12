@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildYtDlpDownloadArgs } from "./media-download.js";
+import { buildYtDlpDownloadArgs, buildYtDlpSubtitleArgs } from "./media-download.js";
 import type { MediaFormat } from "./parser.js";
 
 const separatedVideo: MediaFormat = {
@@ -48,4 +48,39 @@ test("yt-dlp download args select the retained video/audio pair and mp4 merge", 
   ]);
   assert.equal(args[args.indexOf("--format") + 1], "30080+30280");
   assert.equal(args[args.indexOf("--merge-output-format") + 1], "mp4");
+});
+
+test("yt-dlp subtitle args refresh the selected automatic caption language", () => {
+  const subtitle: MediaFormat = {
+    ...separatedVideo,
+    id: "subtitle-auto-zh-Hans-0",
+    url: "https://cdn.example.com/caption.vtt",
+    ext: "vtt",
+    mimeType: "text/vtt",
+    width: null,
+    height: null,
+    fps: null,
+    bitrateKbps: null,
+    videoCodec: null,
+    audioCodec: null,
+    hasVideo: false,
+    hasAudio: false,
+    requiresMuxing: false,
+    mediaType: "subtitle",
+    language: "zh-Hans",
+    automatic: true,
+  };
+  const args = buildYtDlpSubtitleArgs("https://www.youtube.com/watch?v=test", subtitle, "C:\\temp\\subtitle.%(ext)s", {
+    ytdlpCookiesFile: undefined,
+    ytdlpCookiesFromBrowser: undefined,
+    ytdlpRetries: 0,
+    ytdlpExtractorRetries: 0,
+    ytdlpFragmentRetries: 0,
+    ytdlpSocketTimeoutMs: 15_000,
+    ffmpegPath: "ffmpeg",
+  });
+
+  assert.ok(args.includes("--write-auto-subs"));
+  assert.equal(args[args.indexOf("--sub-langs") + 1], "zh-Hans");
+  assert.equal(args[args.indexOf("--sub-format") + 1], "vtt/best");
 });

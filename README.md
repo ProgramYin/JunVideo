@@ -117,3 +117,37 @@ Windows 如果 `python` 仍指向 Microsoft Store 的占位别名，可改用 `n
 `ffmpeg` must be installed and available through `FFMPEG_PATH`. `WHISPER_MODEL=tiny` is the fast default. `CORRECTION_MODE=rules` works offline with conservative common-ASR corrections; set `CORRECTION_MODE=openai` and configure `OPENAI_API_KEY` to use an OpenAI-compatible HTTP correction endpoint. The raw transcript is retained in the response alongside the corrected text, and temporary audio files are removed after each request.
 
 The reference implementation is used for workflow and platform-boundary ideas, while JunVideo keeps yt-dlp as the primary extractor instead of vendoring a second platform parser. Only public, authorized media is supported; DRM, login walls, paywalls, and access-control bypass are not provided.
+
+## 生产部署
+
+项目包含三套可复用的生产配置：Supabase 托管 PostgreSQL、Vercel Container 承载 Express + yt-dlp + FFmpeg + Whisper，以及 Cloudflare Pages 承载静态前端。`Dockerfile.vercel` 会在镜像内固定安装 yt-dlp `2026.7.4`、FFmpeg 和 Whisper tiny 模型；`supabase/migrations` 保存可追踪的数据库迁移；`public/_headers` 与 `public/_redirects` 负责 Pages 的安全头和 SPA 回退。
+
+1. 在 Supabase 创建项目，取得 Transaction Pooler 连接串后执行迁移：
+
+   ```powershell
+   npx supabase login
+   npx supabase link --project-ref <project-ref>
+   npx supabase db push
+   ```
+
+2. 在 Vercel 导入仓库并使用 `Dockerfile.vercel`，至少配置：
+
+   ```text
+   DATABASE_URL=<Supabase transaction pooler URL>
+   DATABASE_SSL=true
+   DATABASE_POOL_MAX=3
+   JWT_SECRET=<at least 32 random characters>
+   CORS_ORIGIN=https://<cloudflare-pages-domain>
+   ```
+
+   Vercel 同源版本会同时提供网页和 `/api`，因此无需设置 `VITE_API_BASE_URL`。
+
+3. 发布 Cloudflare Pages 前，把 API 地址作为 Vite 构建变量：
+
+   ```powershell
+   $env:VITE_API_BASE_URL="https://<vercel-domain>/api"
+   npm run build
+   npx wrangler pages deploy dist/client --project-name junvideo
+   ```
+
+Cloudflare Pages 域名确定后，应同步写入 Vercel 的 `CORS_ORIGIN` 并重新部署。生产环境会自动关闭开发 VIP 激活入口；真实会员计费仍需另接订单与 webhook 服务。

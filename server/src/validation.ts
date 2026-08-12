@@ -7,6 +7,10 @@ export const credentialsSchema = z.object({
   password: z.string().min(8).max(72),
 });
 
+export const registrationSchema = credentialsSchema.extend({
+  name: z.string().trim().min(1).max(60),
+});
+
 export const urlBodySchema = z.object({
   url: z.string().max(2_048).optional(),
   sourceUrl: z.string().max(2_048).optional(),

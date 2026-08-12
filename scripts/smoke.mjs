@@ -19,6 +19,7 @@ const auth = await request('/api/auth/register', {
   body: JSON.stringify({ name: 'Smoke Test', email, password }),
 });
 if (!auth.token) throw new Error('Register did not return a token');
+if (auth.user?.name !== 'Smoke Test') throw new Error('Register did not persist the supplied name');
 const headers = { authorization: `Bearer ${auth.token}` };
 const usage = await request('/api/usage', { headers });
 if (usage.limit !== 10 && usage.usage?.limit !== 10) throw new Error('Free quota is not 10');

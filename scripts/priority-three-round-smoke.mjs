@@ -27,7 +27,7 @@ async function register(round) {
   const email = `priority-${round}-${crypto.randomUUID()}@example.test`;
   const result = await request("/api/auth/register", {
     method: "POST",
-    body: JSON.stringify({ email, password: "JunVideo-priority-123" }),
+    body: JSON.stringify({ name: `Priority Smoke ${round}`, email, password: "JunVideo-priority-123" }),
   });
   if (result.response.status !== 201 || !result.body?.token) {
     throw new Error(`round ${round} registration failed: ${JSON.stringify(result.body)}`);

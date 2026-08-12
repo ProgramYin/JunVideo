@@ -33,7 +33,7 @@ if (cases.length === 0) throw new Error(`No test cases found in ${testCasePath}`
 const email = `test-cases-${crypto.randomUUID()}@example.test`;
 const registration = await request("/api/auth/register", {
   method: "POST",
-  body: JSON.stringify({ email, password: "JunVideo-cases-123" }),
+  body: JSON.stringify({ name: "Test Cases Smoke", email, password: "JunVideo-cases-123" }),
 });
 if (registration.response.status !== 201 || !registration.body?.token) {
   throw new Error(`Registration failed: ${JSON.stringify(registration.body)}`);

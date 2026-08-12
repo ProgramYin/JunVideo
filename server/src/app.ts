@@ -1,4 +1,6 @@
 import express, { type Express } from "express";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { config } from "./config.js";
 import { errorHandler, notFoundHandler } from "./errors.js";
 import { corsMiddleware, requestIdMiddleware, setSecurityHeaders } from "./http.js";
@@ -23,6 +25,30 @@ export function createApp(dependencies: AppDependencies = {}): Express {
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 
   app.use("/api", createApiRouter(dependencies.parser ?? new ParserService(), dependencies.transcriptService ?? new TranscriptService()));
+
+  const clientDist = join(process.cwd(), "dist", "client");
+  const clientIndex = join(clientDist, "index.html");
+  if (config.serveClient && existsSync(clientIndex)) {
+    app.use(express.static(clientDist, {
+      index: false,
+      setHeaders(response, filePath) {
+        response.setHeader(
+          "Cache-Control",
+          filePath.includes(`${join("dist", "client", "assets")}`)
+            ? "public, max-age=31536000, immutable"
+            : "public, max-age=3600",
+        );
+      },
+    }));
+    app.use((request, response, next) => {
+      if (request.method !== "GET" || request.path.startsWith("/api") || !request.accepts("html")) {
+        next();
+        return;
+      }
+      response.setHeader("Cache-Control", "no-cache");
+      response.sendFile(clientIndex);
+    });
+  }
   app.use(notFoundHandler);
   app.use(errorHandler);
   return app;
