@@ -441,7 +441,7 @@ function TranscriptPanel({ job, tx }: { job: ParseJob; tx: (key: CopyKey) => str
     setIsTranscribing(true);
     setError(null);
     try {
-      setTranscript(await transcribeVideo(job, { language: 'Chinese' }));
+      setTranscript(await transcribeVideo(job));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : tx('transcriptionFailed'));
     } finally {

@@ -29,8 +29,12 @@ def main() -> int:
     import whisper
 
     model = whisper.load_model(args.model)
-    result = model.transcribe(args.audio, language=args.language, fp16=False)
-    print(json.dumps({"text": str(result.get("text", "")).strip()}, ensure_ascii=False))
+    language = None if args.language.strip().lower() in {"", "auto", "detect", "automatic"} else args.language
+    result = model.transcribe(args.audio, language=language, fp16=False)
+    print(json.dumps({
+        "text": str(result.get("text", "")).strip(),
+        "language": str(result.get("language", "")).strip(),
+    }, ensure_ascii=False))
     return 0
 
 

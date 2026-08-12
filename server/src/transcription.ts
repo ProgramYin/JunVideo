@@ -16,6 +16,10 @@ export interface TranscriptResult {
   correctionMode: "rules" | "openai" | "none";
 }
 
+export function resolveTranscriptionLanguage(value?: string): string {
+  return value?.trim() || "auto";
+}
+
 const CORRECTION_RULES: ReadonlyArray<readonly [string, string]> = [
   ["克服", "客服"],
   ["富盘", "复盘"],
@@ -140,7 +144,10 @@ export class TranscriptService {
       throw new TranscriptionUnavailableError("Transcription is disabled by TRANSCRIPTION_ENABLED=false.");
     }
 
-    const language = options.language?.trim() || "Chinese";
+    // Let Whisper detect the language unless the caller explicitly selects
+    // one. This keeps an English video from being forced through Chinese
+    // decoding while preserving explicit language control for the API.
+    const language = resolveTranscriptionLanguage(options.language);
     const model = options.model?.trim() || this.appConfig.whisperModel;
     const workDir = join(tmpdir(), `junvideo-transcribe-${randomUUID()}`);
     const audioPath = join(workDir, "audio.wav");
@@ -214,6 +221,7 @@ export class TranscriptService {
       }
       const rawText = stringValue(payload.text);
       if (!rawText) throw new TranscriptionFailedError("No spoken text was detected in this video.");
+      const detectedLanguage = stringValue(payload.language) || language;
       let correctedText = rawText;
       let correctionMode: TranscriptResult["correctionMode"] = "none";
       if (this.appConfig.correctionMode === "rules") {
@@ -223,7 +231,7 @@ export class TranscriptService {
         correctedText = await correctWithOpenAi(rawText, this.appConfig);
         correctionMode = "openai";
       }
-      return { rawText, correctedText, language, model, correctionMode };
+      return { rawText, correctedText, language: detectedLanguage, model, correctionMode };
     } finally {
       if (preparedAudio) await cleanupPreparedMedia(preparedAudio);
       await rm(workDir, { recursive: true, force: true }).catch(() => undefined);

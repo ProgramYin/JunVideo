@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildFfmpegArgs, buildWhisperArgs, correctTranscript } from "./transcription.js";
+import { buildFfmpegArgs, buildWhisperArgs, correctTranscript, resolveTranscriptionLanguage } from "./transcription.js";
 
 test("transcript correction fixes common Chinese ASR errors without rewriting wording", () => {
   assert.equal(correctTranscript("今天讲克服问题，最后做富盘。"), "今天讲客服问题，最后做复盘。");
@@ -40,4 +40,9 @@ test("Whisper receives the configured ffmpeg path for its audio loader", () => {
     "C:\\Tools\\ffmpeg\\ffmpeg.exe",
   );
   assert.deepEqual(args.slice(-2), ["--ffmpeg-path", "C:\\Tools\\ffmpeg\\ffmpeg.exe"]);
+});
+
+test("transcription defaults to automatic language detection", () => {
+  assert.equal(resolveTranscriptionLanguage(), "auto");
+  assert.equal(resolveTranscriptionLanguage(" English "), "English");
 });

@@ -42,6 +42,20 @@ if (registration.response.status !== 201 || !registration.body?.token) {
 const headers = { authorization: `Bearer ${registration.body.token}` };
 const probeBytesLimit = Math.max(16 * 1024, Number.parseInt(process.env.MEDIA_PROBE_BYTES ?? "65536", 10));
 
+function probeVideoFormat(job) {
+  const remembered = Array.isArray(job.metadata?.allVideoFormats) ? job.metadata.allVideoFormats : [];
+  const candidates = [...remembered, ...(Array.isArray(job.videoFormats) ? job.videoFormats : [])]
+    .filter((format, index, values) => format && typeof format.id === "string" && values.findIndex((item) => item?.id === format.id) === index);
+  return candidates.sort((left, right) => {
+    const leftSize = Number.isFinite(left.filesize) && left.filesize > 0 ? left.filesize : Number.POSITIVE_INFINITY;
+    const rightSize = Number.isFinite(right.filesize) && right.filesize > 0 ? right.filesize : Number.POSITIVE_INFINITY;
+    return leftSize - rightSize
+      || (left.height ?? Number.POSITIVE_INFINITY) - (right.height ?? Number.POSITIVE_INFINITY)
+      || (left.bitrateKbps ?? Number.POSITIVE_INFINITY) - (right.bitrateKbps ?? Number.POSITIVE_INFINITY)
+      || String(left.id).localeCompare(String(right.id));
+  })[0] ?? job.videoFormats?.[0] ?? null;
+}
+
 async function probeMedia(job, kind, formatId) {
   const response = await fetch(
     `${baseUrl}/api/proxy/${encodeURIComponent(job.id)}/${kind}?formatId=${encodeURIComponent(formatId)}`,
@@ -67,53 +81,70 @@ async function probeMedia(job, kind, formatId) {
 
 const report = [];
 const secondPhase = [];
+const failures = [];
 for (const item of cases) {
-  const parsed = await request("/api/parse", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ url: item.value }),
-  });
-  const job = parsed.body?.job;
-  const error = parsed.body?.error ?? job?.error;
-  if (!job || job.platform === "other") {
-    throw new Error(`${item.name} was not recognized: ${JSON.stringify(parsed.body)}`);
-  }
-  if (error?.code === "INVALID_INPUT" || parsed.response.status === 400) {
-    throw new Error(`${item.name} was rejected before platform parsing: ${JSON.stringify(parsed.body)}`);
-  }
-  if (job.status === "succeeded" && ((job.videoFormats?.length ?? 0) === 0 || (job.audioFormats?.length ?? 0) === 0 || !job.thumbnailUrl)) {
-    throw new Error(`${item.name} succeeded without complete media categories: ${JSON.stringify(job)}`);
-  }
-  if (job.sourceUrl !== item.value) {
-    throw new Error(`${item.name} rewrote the pasted input: expected ${JSON.stringify(item.value)}, got ${JSON.stringify(job.sourceUrl)}`);
-  }
-  report.push({
-    name: item.name,
-    input: item.value,
-    httpStatus: parsed.response.status,
-    platform: job.platform,
-    jobStatus: job.status,
-    normalizedSourceUrl: job.sourceUrl,
-    videoFormats: job.videoFormats?.length ?? 0,
-    audioFormats: job.audioFormats?.length ?? 0,
-    coverAvailable: Boolean(job.thumbnailUrl),
-    errorCode: error?.code ?? null,
-    error: error?.message ?? null,
-  });
-  if (job.status === "succeeded") {
-    const selections = [
-      ...(job.videoFormats?.[0] ? [["video", job.videoFormats[0].id]] : []),
-      ...(job.audioFormats?.[0] ? [["audio", job.audioFormats[0].id]] : []),
-      ...(job.thumbnailUrl ? [["image", "thumbnail"]] : []),
-    ];
-    for (const [kind, formatId] of selections) {
-      const media = await probeMedia(job, kind, formatId);
-      if (media.status !== 200 || media.probeBytes === 0) {
-        throw new Error(`${item.name} ${kind} second phase failed: ${JSON.stringify(media)}`);
-      }
-      secondPhase.push({ name: item.name, ...media });
+  try {
+    const parsed = await request("/api/parse", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: item.value }),
+    });
+    const job = parsed.body?.job;
+    const error = parsed.body?.error ?? job?.error;
+    if (!job || job.platform === "other") {
+      failures.push({ name: item.name, stage: "parse", error: "not recognized", details: parsed.body });
+      continue;
     }
+    if (error?.code === "INVALID_INPUT" || parsed.response.status === 400) {
+      failures.push({ name: item.name, stage: "parse", error: error?.message ?? "invalid input", details: parsed.body });
+      continue;
+    }
+    if (job.status === "succeeded" && ((job.videoFormats?.length ?? 0) === 0 || (job.audioFormats?.length ?? 0) === 0 || !job.thumbnailUrl)) {
+      failures.push({ name: item.name, stage: "parse", error: "succeeded without complete media categories" });
+      continue;
+    }
+    if (job.sourceUrl !== item.value) {
+      failures.push({ name: item.name, stage: "parse", error: "pasted input was rewritten", expected: item.value, actual: job.sourceUrl });
+      continue;
+    }
+    report.push({
+      name: item.name,
+      input: item.value,
+      httpStatus: parsed.response.status,
+      platform: job.platform,
+      jobStatus: job.status,
+      normalizedSourceUrl: job.sourceUrl,
+      videoFormats: job.videoFormats?.length ?? 0,
+      audioFormats: job.audioFormats?.length ?? 0,
+      coverAvailable: Boolean(job.thumbnailUrl),
+      errorCode: error?.code ?? null,
+      error: error?.message ?? null,
+    });
+    if (job.status === "succeeded") {
+      const probeVideo = probeVideoFormat(job);
+      const selections = [
+        ...(probeVideo ? [["video", probeVideo.id]] : []),
+        ...(job.audioFormats?.[0] ? [["audio", job.audioFormats[0].id]] : []),
+        ...(job.thumbnailUrl ? [["image", "thumbnail"]] : []),
+      ];
+      for (const [kind, formatId] of selections) {
+        const media = await probeMedia(job, kind, formatId);
+        if (media.status !== 200 || media.probeBytes === 0) {
+          failures.push({ name: item.name, stage: `${kind} second phase`, error: media });
+          continue;
+        }
+        secondPhase.push({ name: item.name, ...media });
+      }
+    }
+  } catch (error) {
+    failures.push({
+      name: item.name,
+      stage: "unexpected",
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
-console.log(JSON.stringify({ baseUrl, testCasePath, count: report.length, probeBytesLimit, report, secondPhase }, null, 2));
+const result = { baseUrl, testCasePath, count: report.length, probeBytesLimit, report, secondPhase, failures };
+console.log(JSON.stringify(result, null, 2));
+if (failures.length > 0) process.exitCode = 1;

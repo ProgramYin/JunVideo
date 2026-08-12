@@ -113,7 +113,7 @@ async function downloadMediaWithYtDlp(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/enoent|not found|cannot find/i.test(message)) {
-      throw new AppError(503, "MEDIA_DOWNLOAD_UNAVAILABLE", `yt-dlp could not be started for this ${kind} download: ${message}`, {
+        throw new AppError(503, "MEDIA_DOWNLOAD_UNAVAILABLE", `yt-dlp could not be started for this ${kind} download: ${message}`, {
           action: "Install yt-dlp and configure YTDLP_PATH, then retry.",
         });
       }
