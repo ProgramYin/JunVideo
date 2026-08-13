@@ -18,6 +18,7 @@ ENV NODE_ENV=production \
     YTDLP_PATH=/opt/junvideo-venv/bin/yt-dlp \
     YTDLP_EXTRACTOR_ARGS=youtube:player_client=web_embedded,android \
     YTDLP_JS_RUNTIMES=node \
+    YTDLP_REMOTE_COMPONENTS=ejs:github \
     FFMPEG_PATH=/usr/bin/ffmpeg \
     FFPROBE_PATH=/usr/bin/ffprobe \
     TEXT_EXTRACTION_ENABLED=true \

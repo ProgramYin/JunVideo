@@ -25,6 +25,7 @@ const envSchema = z.object({
   // the default set while allowing deployments to tune extractor behavior.
   YTDLP_EXTRACTOR_ARGS: z.string().min(1).default("youtube:player_client=web_embedded,android"),
   YTDLP_JS_RUNTIMES: z.string().optional(),
+  YTDLP_REMOTE_COMPONENTS: z.string().optional(),
   YTDLP_COOKIES_FILE: z.string().optional(),
   YTDLP_COOKIES_FROM_BROWSER: z.string().optional(),
   TEXT_EXTRACTION_ENABLED: z.enum(["true", "false"]).default("true"),
@@ -120,6 +121,7 @@ export const config = {
   ytdlpSocketTimeoutMs: parsedEnv.YTDLP_SOCKET_TIMEOUT_MS,
   ytdlpExtractorArgs: parsedEnv.YTDLP_EXTRACTOR_ARGS.trim(),
   ytdlpJsRuntimes: parsedEnv.YTDLP_JS_RUNTIMES?.trim() || undefined,
+  ytdlpRemoteComponents: parsedEnv.YTDLP_REMOTE_COMPONENTS?.trim() || undefined,
   ytdlpCookiesFile,
   ytdlpCookiesFromBrowser,
   textExtractionEnabled: parsedEnv.TEXT_EXTRACTION_ENABLED === "true",

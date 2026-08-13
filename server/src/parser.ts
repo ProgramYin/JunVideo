@@ -97,7 +97,7 @@ const AVAILABILITY_CACHE_MS = 15_000;
 export function buildYtDlpArgs(
   normalizedUrl: string,
   appConfig: Pick<AppConfig, "ytdlpCookiesFile" | "ytdlpCookiesFromBrowser" | "ytdlpRetries" | "ytdlpExtractorRetries" | "ytdlpFragmentRetries" | "ytdlpSocketTimeoutMs">
-    & Partial<Pick<AppConfig, "ytdlpExtractorArgs" | "ytdlpJsRuntimes">>,
+    & Partial<Pick<AppConfig, "ytdlpExtractorArgs" | "ytdlpJsRuntimes" | "ytdlpRemoteComponents">>,
 ): string[] {
   const args = [
     "--ignore-config",
@@ -111,6 +111,7 @@ export function buildYtDlpArgs(
   ];
   if (appConfig.ytdlpExtractorArgs) args.push("--extractor-args", appConfig.ytdlpExtractorArgs);
   if (appConfig.ytdlpJsRuntimes) args.push("--js-runtimes", appConfig.ytdlpJsRuntimes);
+  if (appConfig.ytdlpRemoteComponents) args.push("--remote-components", appConfig.ytdlpRemoteComponents);
   if (appConfig.ytdlpCookiesFile) args.push("--cookies", appConfig.ytdlpCookiesFile);
   if (appConfig.ytdlpCookiesFromBrowser) args.push("--cookies-from-browser", appConfig.ytdlpCookiesFromBrowser);
   args.push("--ignore-no-formats-error", "--dump-single-json", "--skip-download", "--", normalizedUrl);

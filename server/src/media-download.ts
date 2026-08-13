@@ -22,7 +22,7 @@ type YtDlpDownloadConfig = Pick<
   | "ytdlpFragmentRetries"
   | "ytdlpSocketTimeoutMs"
   | "ffmpegPath"
-> & Partial<Pick<AppConfig, "ytdlpExtractorArgs" | "ytdlpJsRuntimes">>;
+> & Partial<Pick<AppConfig, "ytdlpExtractorArgs" | "ytdlpJsRuntimes" | "ytdlpRemoteComponents">>;
 
 type SubtitleDownloadConfig = YtDlpDownloadConfig & Pick<
   AppConfig,
@@ -43,6 +43,7 @@ function downloadCommonArgs(appConfig: YtDlpDownloadConfig): string[] {
   ];
   if (appConfig.ytdlpExtractorArgs) args.push("--extractor-args", appConfig.ytdlpExtractorArgs);
   if (appConfig.ytdlpJsRuntimes) args.push("--js-runtimes", appConfig.ytdlpJsRuntimes);
+  if (appConfig.ytdlpRemoteComponents) args.push("--remote-components", appConfig.ytdlpRemoteComponents);
   if (appConfig.ytdlpCookiesFile) args.push("--cookies", appConfig.ytdlpCookiesFile);
   if (appConfig.ytdlpCookiesFromBrowser) args.push("--cookies-from-browser", appConfig.ytdlpCookiesFromBrowser);
   return args;

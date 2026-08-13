@@ -58,6 +58,7 @@ test("yt-dlp metadata arguments use HTTP timeouts without automatic retries", ()
     ytdlpSocketTimeoutMs: 15_001,
     ytdlpExtractorArgs: "youtube:player_client=web_embedded,android",
     ytdlpJsRuntimes: "node",
+    ytdlpRemoteComponents: "ejs:github",
   });
 
   assert.deepEqual(args.slice(0, 12), [
@@ -71,9 +72,10 @@ test("yt-dlp metadata arguments use HTTP timeouts without automatic retries", ()
     "--socket-timeout", "16",
   ]);
   assert.ok(args.includes("--ignore-no-formats-error"));
-  assert.deepEqual(args.slice(12, 16), [
+  assert.deepEqual(args.slice(12, 18), [
     "--extractor-args", "youtube:player_client=web_embedded,android",
     "--js-runtimes", "node",
+    "--remote-components", "ejs:github",
   ]);
   assert.deepEqual(args.slice(-4), ["--dump-single-json", "--skip-download", "--", "https://www.bilibili.com/video/BV1test"]);
 });
