@@ -326,3 +326,28 @@ test("yt-dlp live chat is not exposed as extractable video text", () => {
   assert.deepEqual(result.subtitleFormats.map((format) => format.language), ["en"]);
   assert.equal(result.metadata.subtitleFormatCount, 1);
 });
+
+test("yt-dlp inline subtitle data is retained as a deterministic text track", () => {
+  const result = parseYtDlpInfo({
+    title: "Inline captions",
+    formats: [{
+      format_id: "18",
+      url: "https://cdn.example.com/video.mp4",
+      ext: "mp4",
+      vcodec: "h264",
+      acodec: "aac",
+    }],
+    subtitles: {
+      en: [{ ext: "vtt", data: "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\ninline" }],
+    },
+  }, {
+    sourceUrl: "https://example.com/watch/inline",
+    canonicalUrl: "https://example.com/watch/inline",
+    platform: { id: "other", label: "Other", hostname: "example.com", recognized: false },
+  });
+
+  const all = result.metadata.allSubtitleFormats as MediaFormat[];
+  assert.equal(all.length, 1);
+  assert.match(all[0]?.url ?? "", /^https:\/\/inline-subtitle\.invalid\//u);
+  assert.match(all[0]?.inlineData ?? "", /^WEBVTT/u);
+});

@@ -109,6 +109,9 @@ function normalizeJob(payload: unknown): ParseJob {
     : Array.isArray(metadata.subtitleFormats)
       ? metadata.subtitleFormats
       : [];
+  const allSubtitleFormats = Array.isArray(metadata.allSubtitleFormats)
+    ? metadata.allSubtitleFormats
+    : subtitleFormats;
   const rawImageFormats = Array.isArray(raw.imageFormats) && raw.imageFormats.length > 0
     ? raw.imageFormats
     : Array.isArray(metadata.imageFormats)
@@ -145,6 +148,10 @@ function normalizeJob(payload: unknown): ParseJob {
     url: format.url ? String(format.url) : undefined,
   });
   const error = raw.error as Record<string, unknown> | null | undefined;
+  const textTracks = allSubtitleFormats
+    .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)))
+    .map((value, index) => toOption(value, 'subtitle', index))
+    .filter((value, index, values) => values.findIndex((candidate) => candidate.id === value.id) === index);
   return {
     id: String(raw.id ?? ''),
     sourceUrl: String(raw.sourceUrl ?? raw.source_url ?? ''),
@@ -162,6 +169,7 @@ function normalizeJob(payload: unknown): ParseJob {
     errorCode: error?.code ? String(error.code) : raw.errorCode ? String(raw.errorCode) : null,
     errorMessage: error?.message ? String(error.message) : raw.errorMessage ? String(raw.errorMessage) : null,
     metadata,
+    textTracks,
     options: [
       ...videoFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value, index) => toOption(value, 'video', index)),
       ...audioFormats.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === 'object')).map((value, index) => toOption(value, 'audio', index)),

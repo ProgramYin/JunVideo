@@ -4,7 +4,7 @@ import { TextExtractionFailedError, TextTrackNotFoundError } from "./errors.js";
 import type { PreparedEmbeddedSubtitle } from "./embedded-subtitle.js";
 import type { MediaFormat } from "./parser.js";
 import type { ExtractedTextResult } from "./subtitle-text.js";
-import { extractVideoText } from "./text-extraction.js";
+import { extractVideoText, serializeExtractedTextResult } from "./text-extraction.js";
 
 function format(id: string, mediaType: "video" | "subtitle"): MediaFormat {
   return {
@@ -117,4 +117,35 @@ test("an unknown explicit track is rejected before embedded inspection", async (
     extractEmbedded: () => result("embedded-subtitle"),
   }, { extract: async () => embedded }), (error: unknown) =>
     error instanceof TextTrackNotFoundError && error.code === "TEXT_TRACK_NOT_FOUND");
+});
+
+test("modern responses avoid duplicate transcript payloads unless requested", () => {
+  const full = result("manual-subtitle");
+  const modern = serializeExtractedTextResult(full);
+  assert.equal(modern.text, "hello");
+  assert.equal(modern.rawText, undefined);
+  assert.equal(modern.correctedText, undefined);
+  assert.equal(modern.segments, undefined);
+  assert.equal(modern.timestampedText, undefined);
+
+  const legacy = serializeExtractedTextResult(full, { legacy: true, includeTimestamps: true });
+  assert.equal(legacy.rawText, "hello");
+  assert.deepEqual(legacy.segments, full.segments);
+});
+
+test("disabled extraction fails before probing embedded media", async () => {
+  let embeddedCalls = 0;
+  await assert.rejects(() => extractVideoText({
+    sourceUrl: "https://example.com/watch/1",
+    subtitleFormats: [],
+    videoFormats: [format("video", "video")],
+    enabled: false,
+  }, {
+    extract: async () => result("manual-subtitle"),
+    extractEmbedded: () => result("embedded-subtitle"),
+  }, {
+    extract: async () => { embeddedCalls += 1; return embedded; },
+  }), (error: unknown) => Boolean(error && typeof error === "object" && "code" in error
+    && error.code === "TEXT_EXTRACTION_UNAVAILABLE"));
+  assert.equal(embeddedCalls, 0);
 });

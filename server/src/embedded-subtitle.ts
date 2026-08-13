@@ -6,6 +6,7 @@ import { AppError, TextTrackNotFoundError, TextTrackTooLargeError } from "./erro
 import type { MediaFormat } from "./parser.js";
 import { isSafeRemoteHttpUrl } from "./platform.js";
 import { runProcess, type ProcessResult } from "./process.js";
+import { fetchRemoteToFile } from "./safe-remote-fetch.js";
 
 export const MAX_EMBEDDED_MEDIA_BYTES = 256 * 1024 * 1024;
 export const EMBEDDED_SUBTITLE_PROBE_TIMEOUT_MS = 30_000;
@@ -103,7 +104,7 @@ export interface EmbeddedSubtitleOptions {
 
 type EmbeddedSubtitleConfig = Pick<
   AppConfig,
-  "ffprobePath" | "ffmpegPath" | "textExtractionMaxBytes"
+  "ffprobePath" | "ffmpegPath" | "textExtractionMaxBytes" | "textExtractionTimeoutMs"
 >;
 
 export type EmbeddedSubtitleProcessRunner = (
@@ -172,42 +173,25 @@ export function rankEmbeddedMediaFormats(formats: readonly MediaFormat[]): Media
       || a.id.localeCompare(b.id, "en"));
 }
 
-function safeHeaderBlock(headers: Readonly<Record<string, string>>): string | null {
-  const allowedNames = new Set(["accept", "accept-language", "origin", "referer", "user-agent"]);
-  const lines = Object.entries(headers)
-    .filter(([name, value]) =>
-      allowedNames.has(name.toLowerCase())
-      &&
-      /^[A-Za-z0-9-]{1,64}$/u.test(name)
-      && value.length <= 2_048
-      && !/[\r\n\0]/u.test(value))
-    .sort(([a], [b]) => a.localeCompare(b, "en"))
-    .map(([name, value]) => `${name}: ${value.trim()}`)
-    .filter((line) => !line.endsWith(": "));
-  return lines.length > 0 ? `${lines.join("\r\n")}\r\n` : null;
-}
-
-function remoteInputArgs(format: MediaFormat, timeoutMs: number): string[] {
-  const headerBlock = safeHeaderBlock(format.httpHeaders);
+function localInputArgs(inputPath: string, timeoutMs: number): string[] {
   return [
-    "-protocol_whitelist", "http,https,tcp,tls",
-    "-rw_timeout", String(timeoutMs * 1_000),
+    "-protocol_whitelist", "file",
     "-probesize", String(PROBE_SIZE_BYTES),
     "-analyzeduration", String(timeoutMs * 1_000),
-    ...(headerBlock ? ["-headers", headerBlock] : []),
-    "-i", format.url,
+    "-i", inputPath,
   ];
 }
 
-export function buildEmbeddedSubtitleProbeArgs(format: MediaFormat): string[] {
-  if (!isEligibleEmbeddedSubtitleFormat(format)) {
+export function buildEmbeddedSubtitleProbeArgs(input: MediaFormat | string): string[] {
+  const inputPath = typeof input === "string" ? input : input.url;
+  if (typeof input !== "string" && !isEligibleEmbeddedSubtitleFormat(input)) {
     throw new AppError(422, "EMBEDDED_SUBTITLE_INPUT_UNSAFE", "The media format is not a bounded, safe single-file input.");
   }
   return [
     "-hide_banner",
     "-v", "error",
     "-nostdin",
-    ...remoteInputArgs(format, EMBEDDED_SUBTITLE_PROBE_TIMEOUT_MS),
+    ...localInputArgs(inputPath, EMBEDDED_SUBTITLE_PROBE_TIMEOUT_MS),
     "-select_streams", "s",
     "-show_entries", "stream=index,codec_name,codec_type:stream_tags=language,title:stream_disposition=default,forced",
     "-of", "json",
@@ -215,12 +199,12 @@ export function buildEmbeddedSubtitleProbeArgs(format: MediaFormat): string[] {
 }
 
 export function buildEmbeddedSubtitleExtractArgs(
-  format: MediaFormat,
+  input: MediaFormat | string,
   streamIndex: number,
   outputPath: string,
   maxOutputBytes: number,
 ): string[] {
-  if (!isEligibleEmbeddedSubtitleFormat(format)) {
+  if (typeof input !== "string" && !isEligibleEmbeddedSubtitleFormat(input)) {
     throw new AppError(422, "EMBEDDED_SUBTITLE_INPUT_UNSAFE", "The media format is not a bounded, safe single-file input.");
   }
   if (!Number.isSafeInteger(streamIndex) || streamIndex < 0) {
@@ -233,7 +217,7 @@ export function buildEmbeddedSubtitleExtractArgs(
     "-hide_banner",
     "-v", "error",
     "-nostdin",
-    ...remoteInputArgs(format, EMBEDDED_SUBTITLE_EXTRACT_TIMEOUT_MS),
+    ...localInputArgs(typeof input === "string" ? input : input.url, EMBEDDED_SUBTITLE_EXTRACT_TIMEOUT_MS),
     "-map", `0:${streamIndex}`,
     "-map_metadata", "-1",
     "-map_chapters", "-1",
@@ -363,12 +347,23 @@ export class EmbeddedSubtitleService {
     let successfulProbeCount = 0;
     let bitmapStreamCount = 0;
     let lastProbeDiagnostic = "";
+    let textStreamCount = 0;
     for (const format of candidates) {
+      const mediaWorkDir = await mkdtemp(join(tmpdir(), "junvideo-embedded-media-"));
+      const localMediaPath = join(mediaWorkDir, `media.${normalizedExtension(format) ?? "bin"}`);
+      try {
+        await fetchRemoteToFile(format.url, localMediaPath, {
+          maxBytes: MAX_EMBEDDED_MEDIA_BYTES,
+          timeoutMs: Math.min(this.appConfig.textExtractionTimeoutMs * 4, EMBEDDED_SUBTITLE_EXTRACT_TIMEOUT_MS),
+          idleTimeoutMs: Math.min(this.appConfig.textExtractionTimeoutMs, 30_000),
+          maxRedirects: 3,
+          headers: format.httpHeaders,
+        });
       let probeResult: ProcessResult;
       try {
         probeResult = await this.processRunner(
           this.appConfig.ffprobePath,
-          buildEmbeddedSubtitleProbeArgs(format),
+          buildEmbeddedSubtitleProbeArgs(localMediaPath),
           EMBEDDED_SUBTITLE_PROBE_TIMEOUT_MS,
           MAX_PROBE_OUTPUT_BYTES,
         );
@@ -395,8 +390,19 @@ export class EmbeddedSubtitleService {
       }
       successfulProbeCount += 1;
       bitmapStreamCount += inventory.rejectedStreams.filter((stream) => stream.reason === "bitmap").length;
-      const selected = rankEmbeddedSubtitleStreams(inventory.textStreams, options.language)[0];
-      if (selected) return this.extractStream(format, selected);
+      const selectedStreams = rankEmbeddedSubtitleStreams(inventory.textStreams, options.language);
+      textStreamCount += selectedStreams.length;
+      for (const selected of selectedStreams) {
+        try {
+          return await this.extractStream(format, selected, localMediaPath);
+        } catch (error) {
+          if (error instanceof AppError && (error.statusCode === 413 || error.statusCode === 503)) throw error;
+          lastProbeDiagnostic = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+        }
+      }
+      } finally {
+        await rm(mediaWorkDir, { recursive: true, force: true }).catch(() => undefined);
+      }
     }
 
     if (successfulProbeCount === 0) {
@@ -409,12 +415,18 @@ export class EmbeddedSubtitleService {
         details: { bitmapStreamCount },
       });
     }
+    if (textStreamCount > 0) {
+      throw new AppError(502, "EMBEDDED_SUBTITLE_EXTRACTION_FAILED", "The available embedded text subtitle streams could not be extracted.", {
+        details: { textStreamCount, diagnostic: lastProbeDiagnostic || undefined },
+      });
+    }
     throw new TextTrackNotFoundError("No supported embedded text subtitle stream was found.");
   }
 
   private async extractStream(
     format: MediaFormat,
     stream: EmbeddedSubtitleStream,
+    inputPath: string,
   ): Promise<PreparedEmbeddedSubtitle> {
     const workDir = await mkdtemp(join(tmpdir(), "junvideo-embedded-subtitle-"));
     const outputPath = join(workDir, "subtitle.vtt");
@@ -423,7 +435,7 @@ export class EmbeddedSubtitleService {
       try {
         result = await this.processRunner(
           this.appConfig.ffmpegPath,
-          buildEmbeddedSubtitleExtractArgs(format, stream.index, outputPath, this.appConfig.textExtractionMaxBytes),
+          buildEmbeddedSubtitleExtractArgs(inputPath, stream.index, outputPath, this.appConfig.textExtractionMaxBytes),
           EMBEDDED_SUBTITLE_EXTRACT_TIMEOUT_MS,
           MAX_PROCESS_DIAGNOSTIC_BYTES,
         );

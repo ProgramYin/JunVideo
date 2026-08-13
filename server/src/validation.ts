@@ -22,6 +22,7 @@ export const textExtractionBodySchema = z.object({
   formatId: z.string().trim().regex(/^[A-Za-z0-9._:-]{1,100}$/u, "formatId contains unsupported characters.").optional(),
   trackId: z.string().trim().regex(/^[A-Za-z0-9._:-]{1,100}$/u, "trackId contains unsupported characters.").optional(),
   language: z.string().trim().min(1).max(80).optional(),
+  includeTimestamps: z.boolean().optional(),
 }).strict().refine((body) => !body.formatId || !body.trackId || body.formatId === body.trackId, {
   message: "formatId and trackId must identify the same subtitle track.",
 });

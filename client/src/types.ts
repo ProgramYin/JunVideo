@@ -53,6 +53,8 @@ export interface ParseJob {
   errorMessage?: string | null;
   metadata?: Record<string, unknown>;
   options?: DownloadOption[];
+  /** Full text-track inventory; download options remain intentionally compact. */
+  textTracks?: DownloadOption[];
 }
 
 export interface SubtitleTextCue {

@@ -87,8 +87,23 @@ function objectValue(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function withoutInlineSubtitleData(format: MediaFormat): MediaFormat {
+  if (format.inlineData === undefined) return format;
+  const { inlineData: _inlineData, ...publicFormat } = format;
+  return publicFormat;
+}
+
 export function toParseJobView(row: ParseJobRow): ParseJobView {
-  const metadata = objectValue(row.metadata);
+  const storedMetadata = objectValue(row.metadata);
+  const metadata: Record<string, unknown> = {
+    ...storedMetadata,
+    ...(Array.isArray(storedMetadata.subtitleFormats) ? {
+      subtitleFormats: arrayValue<MediaFormat>(storedMetadata.subtitleFormats).map(withoutInlineSubtitleData),
+    } : {}),
+    ...(Array.isArray(storedMetadata.allSubtitleFormats) ? {
+      allSubtitleFormats: arrayValue<MediaFormat>(storedMetadata.allSubtitleFormats).map(withoutInlineSubtitleData),
+    } : {}),
+  };
   const error = row.error_code && row.error_message
     ? {
         code: row.error_code,
@@ -270,7 +285,9 @@ export function parseResultToColumns(result: ParseResult): {
     audioFormats: result.audioFormats,
     metadata: {
       ...result.metadata,
-      subtitleFormats: result.subtitleFormats,
+      // Keep inline payloads only in the full server-side inventory. The
+      // compact display list is returned frequently and must stay lightweight.
+      subtitleFormats: result.subtitleFormats.map(withoutInlineSubtitleData),
       allSubtitleFormats: result.metadata.allSubtitleFormats ?? result.subtitleFormats,
       imageFormats: result.imageFormats,
       mock: result.mock,

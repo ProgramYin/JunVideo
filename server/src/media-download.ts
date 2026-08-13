@@ -93,11 +93,12 @@ export function buildYtDlpSubtitleArgs(
     });
   }
   const ext = format.ext?.toLowerCase().replace(/[^a-z0-9]/gu, "").slice(0, 12) || "vtt";
+  const exactLanguage = `^${language.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`;
   return [
     ...downloadCommonArgs(appConfig),
     "--skip-download",
     format.automatic ? "--write-auto-subs" : "--write-subs",
-    "--sub-langs", language,
+    "--sub-langs", exactLanguage,
     "--sub-format", `${ext}/best`,
     "--no-part",
     "--no-mtime",

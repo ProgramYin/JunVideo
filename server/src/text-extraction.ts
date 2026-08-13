@@ -1,4 +1,4 @@
-import { AppError, TextTrackNotFoundError } from "./errors.js";
+import { AppError, TextExtractionUnavailableError, TextTrackNotFoundError } from "./errors.js";
 import type { EmbeddedSubtitleService } from "./embedded-subtitle.js";
 import type { MediaFormat } from "./parser.js";
 import type {
@@ -12,6 +12,27 @@ export interface VideoTextExtractionInput {
   subtitleFormats: readonly MediaFormat[];
   videoFormats: readonly MediaFormat[];
   options?: SubtitleSelectionOptions;
+  enabled?: boolean;
+}
+
+export function serializeExtractedTextResult(
+  result: ExtractedTextResult,
+  options: { legacy?: boolean; includeTimestamps?: boolean } = {},
+): Record<string, unknown> {
+  const {
+    rawText,
+    correctedText,
+    model,
+    correctionMode,
+    segments,
+    timestampedText,
+    ...modern
+  } = result;
+  return {
+    ...modern,
+    ...(options.legacy ? { rawText, correctedText, model, correctionMode } : {}),
+    ...(options.includeTimestamps ? { segments, timestampedText } : {}),
+  };
 }
 
 type SubtitleExtractor = Pick<SubtitleTextService, "extract" | "extractEmbedded">;
@@ -19,7 +40,10 @@ type EmbeddedExtractor = Pick<EmbeddedSubtitleService, "extract">;
 
 function mayTryEmbeddedAfter(error: unknown): boolean {
   return error instanceof AppError
-    && (error.code === "TEXT_EXTRACTION_FAILED" || error.code === "TEXT_TRACK_NOT_FOUND");
+    && (error.code === "TEXT_EXTRACTION_FAILED"
+      || error.code === "TEXT_TRACK_NOT_FOUND"
+      || error.statusCode === 413
+      || (error.statusCode === 503 && error.code !== "TEXT_EXTRACTION_UNAVAILABLE"));
 }
 
 /**
@@ -32,6 +56,9 @@ export async function extractVideoText(
   subtitleExtractor: SubtitleExtractor,
   embeddedExtractor: EmbeddedExtractor,
 ): Promise<ExtractedTextResult> {
+  if (input.enabled === false) {
+    throw new TextExtractionUnavailableError("Deterministic text-track extraction is disabled on this server.");
+  }
   const options = input.options ?? {};
   const explicitTrackId = (options.trackId ?? options.formatId)?.trim();
   let externalFailure: unknown;

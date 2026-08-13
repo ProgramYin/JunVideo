@@ -8,10 +8,10 @@ import {
 } from "./errors.js";
 import {
   cleanupPreparedMedia,
-  downloadSubtitleWithYtDlp,
   type PreparedMediaFile,
 } from "./media-download.js";
 import type { MediaFormat } from "./parser.js";
+import { fetchRemoteBuffer } from "./safe-remote-fetch.js";
 
 export interface SubtitleCue {
   startMs: number;
@@ -686,11 +686,25 @@ export function buildSubtitleResult(
 }
 
 export interface SubtitleTextDependencies {
+  /**
+   * Test/compatibility seam for callers that already prepare a local file.
+   * Production extraction uses the bounded remote fetcher below.
+   */
   downloadSubtitle?: (
     sourceUrl: string,
     format: MediaFormat,
     config: AppConfig,
   ) => Promise<PreparedMediaFile>;
+  fetchSubtitle?: (
+    url: string,
+    options: {
+      maxBytes: number;
+      timeoutMs: number;
+      idleTimeoutMs?: number;
+      maxRedirects?: number;
+      headers?: Record<string, string>;
+    },
+  ) => Promise<Buffer>;
   cleanupPrepared?: (file: PreparedMediaFile) => Promise<void>;
   readSubtitleFile?: (path: string) => Promise<Buffer>;
 }
@@ -707,11 +721,13 @@ function errorDiagnostic(error: unknown): string {
 }
 
 /**
- * Deterministic extraction service: refresh a known text track with yt-dlp,
- * parse it locally, and never route audio through ASR or an AI service.
+ * Deterministic extraction service: download a discovered text track through
+ * a DNS-pinned, byte-limited HTTP client, parse it locally, and never route
+ * audio through ASR or an AI service.
  */
 export class SubtitleTextService {
-  private readonly downloadSubtitle: NonNullable<SubtitleTextDependencies["downloadSubtitle"]>;
+  private readonly downloadSubtitle?: SubtitleTextDependencies["downloadSubtitle"];
+  private readonly fetchSubtitle: NonNullable<SubtitleTextDependencies["fetchSubtitle"]>;
   private readonly cleanupPrepared: NonNullable<SubtitleTextDependencies["cleanupPrepared"]>;
   private readonly readSubtitleFile: NonNullable<SubtitleTextDependencies["readSubtitleFile"]>;
 
@@ -719,7 +735,8 @@ export class SubtitleTextService {
     private readonly appConfig: AppConfig,
     dependencies: SubtitleTextDependencies = {},
   ) {
-    this.downloadSubtitle = dependencies.downloadSubtitle ?? downloadSubtitleWithYtDlp;
+    this.downloadSubtitle = dependencies.downloadSubtitle;
+    this.fetchSubtitle = dependencies.fetchSubtitle ?? fetchRemoteBuffer;
     this.cleanupPrepared = dependencies.cleanupPrepared ?? cleanupPreparedMedia;
     this.readSubtitleFile = dependencies.readSubtitleFile ?? readFile;
   }
@@ -742,12 +759,28 @@ export class SubtitleTextService {
 
     const explicitSelection = Boolean((options.trackId ?? options.formatId)?.trim());
     const failures: Array<{ trackId: string; message: string }> = [];
+    let deferredInfrastructureError: AppError | undefined;
     for (const candidate of candidates) {
       let prepared: PreparedMediaFile | null = null;
       try {
-        prepared = await this.downloadSubtitle(sourceUrl, candidate, this.appConfig);
-        const bytes = await this.readSubtitleFile(prepared.filePath);
-        const cues = parseSubtitleBuffer(bytes, prepared.extension || candidate.ext || "", {
+        let bytes: Buffer;
+        let extension = candidate.ext || "";
+        if (candidate.inlineData !== undefined) {
+          bytes = Buffer.from(candidate.inlineData, "utf8");
+        } else if (this.downloadSubtitle) {
+          prepared = await this.downloadSubtitle(sourceUrl, candidate, this.appConfig);
+          bytes = await this.readSubtitleFile(prepared.filePath);
+          extension = prepared.extension || extension;
+        } else {
+          bytes = await this.fetchSubtitle(candidate.url, {
+            maxBytes: this.appConfig.textExtractionMaxBytes,
+            timeoutMs: this.appConfig.textExtractionTimeoutMs,
+            idleTimeoutMs: Math.min(this.appConfig.textExtractionTimeoutMs, 15_000),
+            maxRedirects: 3,
+            headers: candidate.httpHeaders,
+          });
+        }
+        const cues = parseSubtitleBuffer(bytes, extension, {
           automatic: Boolean(candidate.automatic),
           limits: {
             maxBytes: this.appConfig.textExtractionMaxBytes,
@@ -760,16 +793,22 @@ export class SubtitleTextService {
         // Limits must never be hidden by fallback. An unavailable executable
         // is shared infrastructure, whereas a single 502 may be an expired
         // track and should fall through to the next ranked candidate.
-        if (error instanceof AppError
-          && (error.statusCode === 413 || error.statusCode === 503 || explicitSelection)) {
+        if (error instanceof AppError && explicitSelection) {
           throw error;
         }
         failures.push({ trackId: candidate.id, message: errorDiagnostic(error) });
+        if (error instanceof AppError && (error.statusCode === 413 || error.statusCode === 503)) {
+          deferredInfrastructureError = error;
+          // A missing yt-dlp executable affects every provider track. The
+          // orchestrator may still recover through the independent embedded path.
+          if (error.statusCode === 503) break;
+        }
       } finally {
         if (prepared) await this.cleanupPrepared(prepared).catch(() => undefined);
       }
     }
 
+    if (deferredInfrastructureError) throw deferredInfrastructureError;
     throw new TextExtractionFailedError("None of the selected text subtitle tracks could be converted to text.", {
       attempts: failures,
     });

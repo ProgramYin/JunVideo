@@ -370,7 +370,7 @@ function App() {
 
               {notice && <div className={`notice notice-${notice.type}`}><span className="notice-dot" />{notice.text}<button onClick={() => setNotice(null)} aria-label={tx('close')}><X size={14} /></button></div>}
 
-              <ResultCard job={job} locale={locale} tx={tx} onRefresh={handleRefreshParse} />
+              <ResultCard job={job} locale={locale} tx={tx} onRefresh={handleRefreshParse} textExtractionEnabled={service?.features?.textExtraction !== false} />
 
               <section className="steps-section">
                 <div className="section-heading-row"><div><span className="section-kicker">02 / HOW IT WORKS</span><h2>{tx('stepsTitle')}</h2></div><span className="heading-rule" /></div>
@@ -447,16 +447,18 @@ function ResultCardBase({ job, locale, tx, onRefresh }: { job: ParseJob | null; 
   </div>;
 }
 
-function ResultCard({ job, locale, tx, onRefresh }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {
+function ResultCard({ job, locale, tx, onRefresh, textExtractionEnabled }: { job: ParseJob | null; locale: Locale; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void; textExtractionEnabled: boolean }) {
   const hasTextContainer = job?.options?.some((option) => option.type === 'video' || option.type === 'subtitle') ?? false;
   return <>
     <ResultCardBase job={job} locale={locale} tx={tx} onRefresh={onRefresh} />
-    {job && job.status !== 'failed' && hasTextContainer && <TextExtractionPanel job={job} tx={tx} />}
+    {job && job.status !== 'failed' && hasTextContainer && textExtractionEnabled && <TextExtractionPanel job={job} tx={tx} />}
   </>;
 }
 
 function TextExtractionPanel({ job, tx }: { job: ParseJob; tx: (key: CopyKey) => string }) {
-  const subtitleTracks = (job.options ?? []).filter((option) => option.type === 'subtitle');
+  const subtitleTracks = job.textTracks?.length
+    ? job.textTracks
+    : (job.options ?? []).filter((option) => option.type === 'subtitle');
   const languages = [...new Set(subtitleTracks.map((option) => option.language).filter((value): value is string => Boolean(value)))];
   const [selectedTrackId, setSelectedTrackId] = useState('');
   const [selectedLanguage, setSelectedLanguage] = useState('');
@@ -504,7 +506,7 @@ function TextExtractionPanel({ job, tx }: { job: ParseJob; tx: (key: CopyKey) =>
         ? tx('embeddedSubtitle')
         : tx('unknownSubtitleSource');
 
-  return <section className="transcript-panel"><div className="transcript-heading"><div><span className="section-kicker">04 / {tx('textExtractionTitle')}</span><h3><FileText size={17} />{tx('textExtractionTitle')}</h3></div><button className="outline-button transcript-action" type="button" onClick={() => void startExtraction()} disabled={isExtracting}>{isExtracting ? <span className="button-spinner" /> : <FileText size={15} />}{isExtracting ? tx('extractingText') : tx('extractText')}</button></div><div className="transcript-controls"><label><span>{tx('subtitleTrack')}</span><select value={selectedTrackId} onChange={(event) => setSelectedTrackId(event.target.value)}><option value="">{tx('autoSelectTrack')}</option>{subtitleTracks.map((option) => <option key={option.id} value={option.id}>{option.language || option.label}{option.automatic ? ` · ${tx('automaticCaption')}` : ` · ${tx('manualSubtitle')}`}{option.ext ? ` · ${option.ext.toUpperCase()}` : ''}</option>)}</select></label><label><span>{tx('subtitleLanguage')}</span><select value={selectedLanguage} onChange={(event) => setSelectedLanguage(event.target.value)}><option value="">{tx('autoDetectLanguage')}</option>{languages.map((language) => <option key={language} value={language}>{language}</option>)}</select></label></div><p className="transcript-boundary">{subtitleTracks.length === 0 && <><strong>{tx('embeddedTrackAttempt')}</strong><br /></>}{tx('textTrackBoundary')}</p>{error && <p className="transcript-error">{error}</p>}{result && <div className="transcript-result"><div className="transcript-result-top"><span>{tx('extractedText')}</span><button className="text-button" type="button" onClick={() => void copyExtractedText()}><Copy size={14} />{copied ? tx('copied') : tx('copyText')}</button></div><div className="transcript-meta"><span>{tx('textSource')}: {sourceLabel}</span><span>{result.language || 'und'}</span><span>{result.cueCount ?? result.segments?.length ?? 0} {tx('cueUnit')}</span>{result.format && <span>{result.format.toUpperCase()}</span>}</div><p>{result.text}</p></div>}</section>;
+  return <section className="transcript-panel"><div className="transcript-heading"><div><span className="section-kicker">04 / {tx('textExtractionTitle')}</span><h3><FileText size={17} />{tx('textExtractionTitle')}</h3></div><button className="outline-button transcript-action" type="button" onClick={() => void startExtraction()} disabled={isExtracting}>{isExtracting ? <span className="button-spinner" /> : <FileText size={15} />}{isExtracting ? tx('extractingText') : tx('extractText')}</button></div><div className="transcript-controls"><label><span>{tx('subtitleTrack')}</span><select value={selectedTrackId} onChange={(event) => { setSelectedTrackId(event.target.value); if (event.target.value) setSelectedLanguage(''); }}><option value="">{tx('autoSelectTrack')}</option>{subtitleTracks.map((option) => <option key={option.id} value={option.id}>{option.language || option.label}{option.automatic ? ` · ${tx('automaticCaption')}` : ` · ${tx('manualSubtitle')}`}{option.ext ? ` · ${option.ext.toUpperCase()}` : ''}</option>)}</select></label><label><span>{tx('subtitleLanguage')}</span><select value={selectedLanguage} onChange={(event) => { setSelectedLanguage(event.target.value); if (event.target.value) setSelectedTrackId(''); }}><option value="">{tx('autoDetectLanguage')}</option>{languages.map((language) => <option key={language} value={language}>{language}</option>)}</select></label></div><p className="transcript-boundary">{subtitleTracks.length === 0 && <><strong>{tx('embeddedTrackAttempt')}</strong><br /></>}{tx('textTrackBoundary')}</p>{error && <p className="transcript-error">{error}</p>}{result && <div className="transcript-result"><div className="transcript-result-top"><span>{tx('extractedText')}</span><button className="text-button" type="button" onClick={() => void copyExtractedText()}><Copy size={14} />{copied ? tx('copied') : tx('copyText')}</button></div><div className="transcript-meta"><span>{tx('textSource')}: {sourceLabel}</span><span>{result.language || 'und'}</span><span>{result.cueCount ?? result.segments?.length ?? 0} {tx('cueUnit')}</span>{result.format && <span>{result.format.toUpperCase()}</span>}</div><p>{result.text}</p></div>}</section>;
 }
 
 function DownloadOptionRow({ option, job, tx, onRefresh }: { option: DownloadOption; job: ParseJob; tx: (key: CopyKey) => string; onRefresh: (sourceUrl: string) => void }) {

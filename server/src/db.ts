@@ -48,6 +48,11 @@ export async function checkDatabase(): Promise<{ ok: true; latencyMs: number } |
     await pool.query("SELECT 1");
     return { ok: true, latencyMs: Date.now() - startedAt };
   } catch (error) {
+    console.error("JunVideo database health check failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      code: error && typeof error === "object" && "code" in error ? String(error.code) : undefined,
+      message: error instanceof Error ? error.message : "Database connection failed.",
+    });
     return {
       ok: false,
       message: error instanceof Error ? error.message : "Database connection failed.",
@@ -58,4 +63,3 @@ export async function checkDatabase(): Promise<{ ok: true; latencyMs: number } |
 export async function closeDatabase(): Promise<void> {
   await pool.end();
 }
-

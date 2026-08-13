@@ -63,33 +63,25 @@ test("media ranking prefers subtitle-friendly containers, direct URLs, then smal
   ]);
 });
 
-test("ffprobe arguments enumerate subtitle streams with bounded network input", () => {
-  const args = buildEmbeddedSubtitleProbeArgs(videoFormat({
-    httpHeaders: {
-      "User-Agent": "JunVideo test",
-      Referer: "https://example.com/watch",
-      "Bad\r\nHeader": "injected",
-      Cookie: "bad\r\nX-Evil: true",
-    },
-  }));
+test("ffprobe arguments inspect only a previously bounded local file", () => {
+  const args = buildEmbeddedSubtitleProbeArgs("C:\\temp\\media.mp4");
   assert.deepEqual(args.slice(0, 4), ["-hide_banner", "-v", "error", "-nostdin"]);
   assert.ok(args.includes("-protocol_whitelist"));
+  assert.equal(args[args.indexOf("-protocol_whitelist") + 1], "file");
   assert.ok(args.includes("-select_streams"));
   assert.equal(args[args.indexOf("-select_streams") + 1], "s");
   assert.equal(args[args.indexOf("-of") + 1], "json");
-  const headers = args[args.indexOf("-headers") + 1] ?? "";
-  assert.match(headers, /Referer: https:\/\/example\.com\/watch\r\n/u);
-  assert.match(headers, /User-Agent: JunVideo test\r\n/u);
-  assert.doesNotMatch(headers, /Evil|injected|Cookie/u);
+  assert.equal(args.includes("-headers"), false);
+  assert.equal(args[args.indexOf("-i") + 1], "C:\\temp\\media.mp4");
 });
 
 test("ffmpeg arguments map one subtitle stream and transcode it to bounded VTT", () => {
-  const args = buildEmbeddedSubtitleExtractArgs(videoFormat(), 7, "C:\\temp\\subtitle.vtt", 8 * 1024 * 1024);
+  const args = buildEmbeddedSubtitleExtractArgs("C:\\temp\\media.mp4", 7, "C:\\temp\\subtitle.vtt", 8 * 1024 * 1024);
   assert.equal(args[args.indexOf("-map") + 1], "0:7");
   assert.equal(args[args.indexOf("-c:s") + 1], "webvtt");
   assert.equal(args[args.indexOf("-f") + 1], "webvtt");
   assert.equal(args[args.indexOf("-fs") + 1], String(8 * 1024 * 1024 + 1));
-  assert.equal(args[args.indexOf("-rw_timeout") + 1], String(EMBEDDED_SUBTITLE_EXTRACT_TIMEOUT_MS * 1_000));
+  assert.equal(args[args.indexOf("-protocol_whitelist") + 1], "file");
   assert.equal(args.at(-1), "C:\\temp\\subtitle.vtt");
 });
 

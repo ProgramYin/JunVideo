@@ -26,7 +26,7 @@ import {
 } from "./media-download.js";
 import { extractUrlFromText, isSafeRemoteHttpUrl, platformCatalog, preflightUrl } from "./platform.js";
 import { SubtitleTextService } from "./subtitle-text.js";
-import { extractVideoText } from "./text-extraction.js";
+import { extractVideoText, serializeExtractedTextResult } from "./text-extraction.js";
 import { getUsageSnapshot, reserveParseAttempt } from "./usage.js";
 import {
   credentialsSchema,
@@ -417,8 +417,15 @@ export function createApiRouter(
       subtitleFormats: formats,
       videoFormats: videoFormatsForTextInspection(job),
       options,
+      enabled: config.textExtractionEnabled,
     }, subtitleTextService, embeddedSubtitleService);
-    response.status(200).json({ transcript });
+    response.setHeader("Cache-Control", "private, no-store");
+    response.status(200).json({
+      transcript: serializeExtractedTextResult(transcript, {
+        legacy: request.path.startsWith("/transcribe/"),
+        includeTimestamps: options.includeTimestamps,
+      }),
+    });
   });
 
   router.post("/extract-text/:jobId", requireAuth, extractTextHandler);

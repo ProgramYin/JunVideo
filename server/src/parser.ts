@@ -49,6 +49,8 @@ export interface MediaFormat {
   language?: string | null;
   /** True when the subtitle track came from automatic_captions. */
   automatic?: boolean;
+  /** Inline subtitle payload used by extractors that return data instead of a URL. */
+  inlineData?: string;
   httpHeaders: Record<string, string>;
 }
 
@@ -413,14 +415,23 @@ function mediaFormatFromRaw(raw: Record<string, unknown>, index: number): MediaF
   };
 }
 
-const SUBTITLE_EXT_PRIORITY = ["vtt", "srt", "ass", "ttml", "srv3", "srv2", "srv1", "json3"] as const;
+const SUBTITLE_EXT_PRIORITY = [
+  "vtt", "srt", "ass", "ssa", "ttml", "dfxp", "xml",
+  "json3", "json", "srv3", "srv2", "srv1", "sbv", "lrc",
+] as const;
 const DISPLAY_SUBTITLE_LIMIT = 16;
+const MAX_INLINE_SUBTITLE_BYTES = 8 * 1024 * 1024;
 
 function subtitleMimeType(ext: string): string {
   if (ext === "vtt") return "text/vtt";
-  if (ext === "srt" || ext === "ass") return "text/plain";
-  if (ext === "ttml") return "application/ttml+xml";
+  if (["srt", "ass", "ssa", "sbv", "lrc"].includes(ext)) return "text/plain";
+  if (["ttml", "dfxp", "xml"].includes(ext)) return "application/ttml+xml";
   return "application/json";
+}
+
+function inlineSubtitleData(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  return Buffer.byteLength(value, "utf8") <= MAX_INLINE_SUBTITLE_BYTES ? value : null;
 }
 
 function subtitleFormatEntries(info: Record<string, unknown>): MediaFormat[] {
@@ -440,9 +451,12 @@ function subtitleFormatEntries(info: Record<string, unknown>): MediaFormat[] {
         .map((track) => ({
           track,
           url: safeText(track.url),
+          inlineData: inlineSubtitleData(track.data),
           ext: (safeText(track.ext, "vtt") ?? "vtt").toLowerCase().replace(/[^a-z0-9]/gu, "").slice(0, 12) || "vtt",
         }))
-        .filter((track) => Boolean(track.url && isSafeRemoteHttpUrl(track.url)))
+        .filter((track) => Boolean(
+          (track.url && isSafeRemoteHttpUrl(track.url)) || track.inlineData,
+        ))
         .sort((a, b) => {
           const aPriority = SUBTITLE_EXT_PRIORITY.indexOf(a.ext as typeof SUBTITLE_EXT_PRIORITY[number]);
           const bPriority = SUBTITLE_EXT_PRIORITY.indexOf(b.ext as typeof SUBTITLE_EXT_PRIORITY[number]);
@@ -450,11 +464,13 @@ function subtitleFormatEntries(info: Record<string, unknown>): MediaFormat[] {
         });
       const slug = language.replace(/[^A-Za-z0-9._-]/gu, "-").replace(/-+/gu, "-").slice(0, 48) || "track";
       for (const selected of candidates) {
-        if (!selected.url) continue;
+        if (!selected.url && !selected.inlineData) continue;
         const name = safeText(selected.track.name);
         formats.push({
           id: `subtitle-${automatic ? "auto" : "manual"}-${slug}-${selected.ext}-${formats.length}`.slice(0, 100),
-          url: selected.url,
+          // The URL is ignored for inline tracks but remains structurally safe
+          // for the shared media-format contract and authenticated UI.
+          url: selected.url ?? `https://inline-subtitle.invalid/${slug}/${formats.length}`,
           ext: selected.ext,
           mimeType: subtitleMimeType(selected.ext),
           width: null,
@@ -472,6 +488,7 @@ function subtitleFormatEntries(info: Record<string, unknown>): MediaFormat[] {
           mediaType: "subtitle",
           language,
           automatic,
+          ...(selected.inlineData ? { inlineData: selected.inlineData } : {}),
           httpHeaders: safeMediaHeaders(selected.track.http_headers),
         });
         if (formats.length >= 200) return;

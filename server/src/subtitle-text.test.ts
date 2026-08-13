@@ -247,3 +247,32 @@ test("service preserves errors for an explicitly selected track", async () => {
     (error: unknown) => error === expected,
   );
 });
+
+test("service parses extractor-provided inline data without spawning yt-dlp", async () => {
+  let downloadCalls = 0;
+  const service = new SubtitleTextService(extractionConfig(), {
+    downloadSubtitle: async () => {
+      downloadCalls += 1;
+      throw new Error("must not download");
+    },
+  });
+  const inline = {
+    ...subtitle("inline", "en", "vtt"),
+    inlineData: `WEBVTT
+
+00:00:00.000 --> 00:00:01.000
+inline text
+`,
+  };
+  const result = await service.extract("https://example.com/video", [inline]);
+  assert.equal(result.text, "inline text");
+  assert.equal(downloadCalls, 0);
+});
+
+test("rolling captions collapse prefixes without requiring Latin spaces", () => {
+  const result = buildSubtitleResult([
+    { startMs: 0, endMs: 2_000, text: "今天天气" },
+    { startMs: 1_000, endMs: 3_000, text: "今天天气很好" },
+  ], subtitle("auto-zh", "zh-Hans", "vtt", true));
+  assert.equal(result.text, "今天天气很好");
+});

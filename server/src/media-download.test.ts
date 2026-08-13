@@ -81,7 +81,7 @@ test("yt-dlp subtitle args refresh the selected automatic caption language", () 
   });
 
   assert.ok(args.includes("--write-auto-subs"));
-  assert.equal(args[args.indexOf("--sub-langs") + 1], "zh-Hans");
+  assert.equal(args[args.indexOf("--sub-langs") + 1], "^zh-Hans$");
   assert.equal(args[args.indexOf("--sub-format") + 1], "vtt/best");
 });
 

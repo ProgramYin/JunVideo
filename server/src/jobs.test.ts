@@ -135,6 +135,40 @@ test("text extraction uses remembered alternatives and filters malformed tracks"
   assert.deepEqual(subtitleFormatsForExtraction(subtitleRow).map((format) => format.ext), ["vtt", "srt"]);
 });
 
+test("inline subtitle payloads stay server-side while remaining extractable", () => {
+  const inline = {
+    id: "subtitle-inline-en-vtt-0",
+    url: "https://inline-subtitle.invalid/en/0",
+    ext: "vtt",
+    mimeType: "text/vtt",
+    width: null,
+    height: null,
+    fps: null,
+    bitrateKbps: null,
+    filesize: null,
+    qualityLabel: "en",
+    videoCodec: null,
+    audioCodec: null,
+    hasVideo: false,
+    hasAudio: false,
+    requiresMuxing: false,
+    mediaType: "subtitle" as const,
+    language: "en",
+    automatic: false,
+    inlineData: "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nprivate payload",
+    httpHeaders: {},
+  };
+  const inlineRow = {
+    ...row,
+    metadata: { subtitleFormats: [inline], allSubtitleFormats: [inline] },
+  } as ParseJobRow;
+
+  assert.match(subtitleFormatsForExtraction(inlineRow)[0]?.inlineData ?? "", /private payload/u);
+  const view = toParseJobView(inlineRow);
+  assert.equal(view.subtitleFormats[0]?.inlineData, undefined);
+  assert.equal((view.metadata.allSubtitleFormats as MediaFormat[])[0]?.inlineData, undefined);
+});
+
 test("persisted image galleries expose every image and keep the thumbnail alias", () => {
   const images = [
     imageFormat("image-1", "https://cdn.example.com/gallery/first.jpg"),
