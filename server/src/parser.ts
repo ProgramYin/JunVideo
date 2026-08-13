@@ -690,7 +690,7 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
       platform: request.platform.id,
       extractor: safeText(info.extractor),
       title: safeText(info.title),
-      response: formatResponseSummary(info),
+      response: JSON.stringify(formatResponseSummary(info)),
     });
     const message =
       request.platform.id === "xiaohongshu"
