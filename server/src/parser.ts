@@ -580,6 +580,9 @@ function formatResponseSummary(info: Record<string, unknown>): Record<string, un
       formatId: safeText(value.format_id),
       videoCodec: safeText(value.vcodec),
       audioCodec: safeText(value.acodec),
+      videoExt: safeText(value.video_ext),
+      audioExt: safeText(value.audio_ext),
+      mime: safeText(value.mime),
       hasUrl: typeof value.url === "string" && value.url.trim().length > 0,
     })),
   };
