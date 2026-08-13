@@ -937,6 +937,7 @@ export class YtDlpAdapter implements ParserAdapter {
       // by egress IP and session. A short, deterministic fallback chain keeps
       // the full yt-dlp boundary while recovering from a metadata-only result.
       const fallbackExtractorArgs = [
+        "youtube:player_client=tv_simply",
         "youtube:player_client=android_vr",
         "youtube:player_client=ios,android_vr",
       ];
