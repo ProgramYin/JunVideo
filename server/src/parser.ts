@@ -561,6 +561,14 @@ function requestedFormatEntries(info: Record<string, unknown>): unknown[] {
   return [...formats, ...requestedFormats, ...requestedDownloads];
 }
 
+function hasSafeMediaCandidate(info: Record<string, unknown>): boolean {
+  if (isSafeRemoteHttpUrl(safeText(info.url) ?? "")) return true;
+  return requestedFormatEntries(info).some((value, index) => Boolean(
+    value && typeof value === "object" && !Array.isArray(value)
+      && mediaFormatFromRaw(value as Record<string, unknown>, index),
+  ));
+}
+
 function formatResponseSummary(info: Record<string, unknown>): Record<string, unknown> {
   const entries = requestedFormatEntries(info);
   const records = entries.filter((value): value is Record<string, unknown> => Boolean(
@@ -923,6 +931,35 @@ export class YtDlpAdapter implements ParserAdapter {
     }
     if (!info || typeof info !== "object") {
       throw new ParserFailedError("yt-dlp returned no media metadata.");
+    }
+    if (request.platform.id === "youtube" && !hasSafeMediaCandidate(info as Record<string, unknown>)) {
+      // YouTube changes which logged-out client receives usable streaming data
+      // by egress IP and session. A short, deterministic fallback chain keeps
+      // the full yt-dlp boundary while recovering from a metadata-only result.
+      const fallbackExtractorArgs = [
+        "youtube:player_client=android_vr",
+        "youtube:player_client=ios,android_vr",
+      ];
+      for (const extractorArgs of fallbackExtractorArgs) {
+        if (extractorArgs === this.appConfig.ytdlpExtractorArgs) continue;
+        const fallbackArgs = buildYtDlpArgs(normalizedUrl, {
+          ...this.appConfig,
+          ytdlpExtractorArgs: extractorArgs,
+        });
+        try {
+          const fallbackProcess = await runProcess(this.appConfig.ytdlpPath, fallbackArgs, this.appConfig.parseTimeoutMs);
+          if (fallbackProcess.exitCode !== 0) continue;
+          const fallbackInfo = parseJsonOutput(fallbackProcess.stdout);
+          if (fallbackInfo && typeof fallbackInfo === "object" && hasSafeMediaCandidate(fallbackInfo as Record<string, unknown>)) {
+            console.info("JunVideo recovered YouTube formats with fallback client", { extractorArgs });
+            info = fallbackInfo;
+            break;
+          }
+        } catch {
+          // Keep the original metadata result and stable parse error if every
+          // fallback client is also metadata-only or unavailable.
+        }
+      }
     }
     try {
       const parsed = parseYtDlpInfo(info as Record<string, unknown>, request);
