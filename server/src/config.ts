@@ -20,6 +20,11 @@ const envSchema = z.object({
   YTDLP_EXTRACTOR_RETRIES: z.coerce.number().int().min(0).max(20).default(0),
   YTDLP_FRAGMENT_RETRIES: z.coerce.number().int().min(0).max(20).default(0),
   YTDLP_SOCKET_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(15_000),
+  // YouTube's logged-out defaults can return metadata without downloadable
+  // formats from serverless IP ranges. Keep the Android-compatible client in
+  // the default set while allowing deployments to tune extractor behavior.
+  YTDLP_EXTRACTOR_ARGS: z.string().min(1).default("youtube:player_client=default,android"),
+  YTDLP_JS_RUNTIMES: z.string().optional(),
   YTDLP_COOKIES_FILE: z.string().optional(),
   YTDLP_COOKIES_FROM_BROWSER: z.string().optional(),
   TEXT_EXTRACTION_ENABLED: z.enum(["true", "false"]).default("true"),
@@ -113,6 +118,8 @@ export const config = {
   ytdlpExtractorRetries: parsedEnv.YTDLP_EXTRACTOR_RETRIES,
   ytdlpFragmentRetries: parsedEnv.YTDLP_FRAGMENT_RETRIES,
   ytdlpSocketTimeoutMs: parsedEnv.YTDLP_SOCKET_TIMEOUT_MS,
+  ytdlpExtractorArgs: parsedEnv.YTDLP_EXTRACTOR_ARGS.trim(),
+  ytdlpJsRuntimes: parsedEnv.YTDLP_JS_RUNTIMES?.trim() || undefined,
   ytdlpCookiesFile,
   ytdlpCookiesFromBrowser,
   textExtractionEnabled: parsedEnv.TEXT_EXTRACTION_ENABLED === "true",

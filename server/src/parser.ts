@@ -96,7 +96,8 @@ const AVAILABILITY_CACHE_MS = 15_000;
 
 export function buildYtDlpArgs(
   normalizedUrl: string,
-  appConfig: Pick<AppConfig, "ytdlpCookiesFile" | "ytdlpCookiesFromBrowser" | "ytdlpRetries" | "ytdlpExtractorRetries" | "ytdlpFragmentRetries" | "ytdlpSocketTimeoutMs">,
+  appConfig: Pick<AppConfig, "ytdlpCookiesFile" | "ytdlpCookiesFromBrowser" | "ytdlpRetries" | "ytdlpExtractorRetries" | "ytdlpFragmentRetries" | "ytdlpSocketTimeoutMs">
+    & Partial<Pick<AppConfig, "ytdlpExtractorArgs" | "ytdlpJsRuntimes">>,
 ): string[] {
   const args = [
     "--ignore-config",
@@ -108,6 +109,8 @@ export function buildYtDlpArgs(
     "--fragment-retries", String(appConfig.ytdlpFragmentRetries),
     "--socket-timeout", String(Math.ceil(appConfig.ytdlpSocketTimeoutMs / 1_000)),
   ];
+  if (appConfig.ytdlpExtractorArgs) args.push("--extractor-args", appConfig.ytdlpExtractorArgs);
+  if (appConfig.ytdlpJsRuntimes) args.push("--js-runtimes", appConfig.ytdlpJsRuntimes);
   if (appConfig.ytdlpCookiesFile) args.push("--cookies", appConfig.ytdlpCookiesFile);
   if (appConfig.ytdlpCookiesFromBrowser) args.push("--cookies-from-browser", appConfig.ytdlpCookiesFromBrowser);
   args.push("--ignore-no-formats-error", "--dump-single-json", "--skip-download", "--", normalizedUrl);

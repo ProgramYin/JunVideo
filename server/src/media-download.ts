@@ -22,7 +22,7 @@ type YtDlpDownloadConfig = Pick<
   | "ytdlpFragmentRetries"
   | "ytdlpSocketTimeoutMs"
   | "ffmpegPath"
->;
+> & Partial<Pick<AppConfig, "ytdlpExtractorArgs" | "ytdlpJsRuntimes">>;
 
 type SubtitleDownloadConfig = YtDlpDownloadConfig & Pick<
   AppConfig,
@@ -41,6 +41,8 @@ function downloadCommonArgs(appConfig: YtDlpDownloadConfig): string[] {
     "--fragment-retries", String(appConfig.ytdlpFragmentRetries),
     "--socket-timeout", String(Math.ceil(appConfig.ytdlpSocketTimeoutMs / 1_000)),
   ];
+  if (appConfig.ytdlpExtractorArgs) args.push("--extractor-args", appConfig.ytdlpExtractorArgs);
+  if (appConfig.ytdlpJsRuntimes) args.push("--js-runtimes", appConfig.ytdlpJsRuntimes);
   if (appConfig.ytdlpCookiesFile) args.push("--cookies", appConfig.ytdlpCookiesFile);
   if (appConfig.ytdlpCookiesFromBrowser) args.push("--cookies-from-browser", appConfig.ytdlpCookiesFromBrowser);
   return args;
