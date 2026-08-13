@@ -16,7 +16,7 @@ ENV NODE_ENV=production \
     SERVE_CLIENT=true \
     PARSER_MODE=yt-dlp \
     YTDLP_PATH=/opt/junvideo-venv/bin/yt-dlp \
-    YTDLP_EXTRACTOR_ARGS=youtube:player_client=default,android \
+    YTDLP_EXTRACTOR_ARGS=youtube:player_client=web_embedded,android \
     YTDLP_JS_RUNTIMES=node \
     FFMPEG_PATH=/usr/bin/ffmpeg \
     FFPROBE_PATH=/usr/bin/ffprobe \

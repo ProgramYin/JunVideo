@@ -23,7 +23,7 @@ const envSchema = z.object({
   // YouTube's logged-out defaults can return metadata without downloadable
   // formats from serverless IP ranges. Keep the Android-compatible client in
   // the default set while allowing deployments to tune extractor behavior.
-  YTDLP_EXTRACTOR_ARGS: z.string().min(1).default("youtube:player_client=default,android"),
+  YTDLP_EXTRACTOR_ARGS: z.string().min(1).default("youtube:player_client=web_embedded,android"),
   YTDLP_JS_RUNTIMES: z.string().optional(),
   YTDLP_COOKIES_FILE: z.string().optional(),
   YTDLP_COOKIES_FROM_BROWSER: z.string().optional(),
