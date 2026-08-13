@@ -134,6 +134,21 @@ function processErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function sanitizedYtDlpDiagnostic(value: string): string {
+  return value
+    .replace(/https?:\/\/[^\s]+/gu, (rawUrl) => {
+      try {
+        const parsed = new URL(rawUrl.replace(/[),.]+$/gu, ""));
+        return `${parsed.origin}${parsed.pathname}`;
+      } catch {
+        return "[url]";
+      }
+    })
+    .replace(/(?:cookie|authorization):[^\r\n]*/giu, (header) => `${header.split(":", 1)[0]}: [redacted]`)
+    .trim()
+    .slice(-4_000);
+}
+
 function restrictedSource(stderr: string): boolean {
   const diagnostic = stderr.toLowerCase();
   return [
@@ -546,6 +561,30 @@ function requestedFormatEntries(info: Record<string, unknown>): unknown[] {
   return [...formats, ...requestedFormats, ...requestedDownloads];
 }
 
+function formatResponseSummary(info: Record<string, unknown>): Record<string, unknown> {
+  const entries = requestedFormatEntries(info);
+  const records = entries.filter((value): value is Record<string, unknown> => Boolean(
+    value && typeof value === "object" && !Array.isArray(value),
+  ));
+  return {
+    candidateCount: entries.length,
+    urlCount: records.filter((value) => typeof value.url === "string" && value.url.trim()).length,
+    streamCount: records.filter((value) => (
+      (typeof value.vcodec === "string" && value.vcodec !== "none")
+      || (typeof value.acodec === "string" && value.acodec !== "none")
+      || (typeof value.mime === "string" && /^(?:audio|video)\//u.test(value.mime))
+    )).length,
+    sample: records.slice(0, 5).map((value) => ({
+      keys: Object.keys(value).slice(0, 24),
+      protocol: safeText(value.protocol),
+      formatId: safeText(value.format_id),
+      videoCodec: safeText(value.vcodec),
+      audioCodec: safeText(value.acodec),
+      hasUrl: typeof value.url === "string" && value.url.trim().length > 0,
+    })),
+  };
+}
+
 function attachPreferredAudioFormat(formats: MediaFormat[]): MediaFormat[] {
   const preferredAudio = formats
     .filter((format) => format.hasAudio && !format.hasVideo)
@@ -644,6 +683,12 @@ export function parseYtDlpInfo(info: Record<string, unknown>, request: ParseRequ
   const imageFormats = formats.length === 0 ? imageFormatEntries(info, request) : [];
 
   if (formats.length === 0 && imageFormats.length === 0) {
+    console.warn("JunVideo yt-dlp returned no safe media formats", {
+      platform: request.platform.id,
+      extractor: safeText(info.extractor),
+      title: safeText(info.title),
+      response: formatResponseSummary(info),
+    });
     const message =
       request.platform.id === "xiaohongshu"
         ? "Xiaohongshu returned no downloadable video, audio, or image formats. Check that the note is public; if the platform applies an access restriction, use an authorized session or configure the XHS-Downloader sidecar."
@@ -819,6 +864,11 @@ export class YtDlpAdapter implements ParserAdapter {
 
     if (result.exitCode !== 0) {
       const diagnostic = result.stderr.trim().slice(-4_000);
+      console.warn("JunVideo yt-dlp parse process failed", {
+        platform: request.platform.id,
+        exitCode: result.exitCode,
+        diagnostic: sanitizedYtDlpDiagnostic(diagnostic),
+      });
       if (request.platform.id === "xiaohongshu") {
         const sidecarResult = await this.parseWithXhsSidecar(sidecarUrl, request);
         if (sidecarResult) return sidecarResult;
