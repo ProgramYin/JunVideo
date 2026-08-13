@@ -30,7 +30,9 @@ RUN apt-get update \
 
 WORKDIR /app
 RUN /opt/junvideo-venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/junvideo-venv/bin/pip install --no-cache-dir "yt-dlp[default]==2026.7.4"
+    && /opt/junvideo-venv/bin/pip install --no-cache-dir \
+         "yt-dlp[default]==2026.7.4" \
+         "yt-dlp-ejs==0.8.0"
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
