@@ -1,0 +1,59 @@
+name: Deploy domestic API
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: domestic-api-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to the domestic API host
+    runs-on: ubuntu-latest
+    environment: domestic-api-production
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          API_SSH_KEY: ${{ secrets.DOMESTIC_API_SSH_KEY }}
+          API_KNOWN_HOSTS: ${{ secrets.DOMESTIC_API_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$API_SSH_KEY"
+          test -n "$API_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$API_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$API_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Pull and rebuild the API
+        shell: bash
+        env:
+          API_HOST: ${{ secrets.DOMESTIC_API_HOST }}
+          API_PORT: ${{ secrets.DOMESTIC_API_SSH_PORT }}
+          API_USER: ${{ secrets.DOMESTIC_API_SSH_USER }}
+          API_PATH: ${{ secrets.DOMESTIC_API_PATH }}
+        run: |
+          set -euo pipefail
+          test -n "$API_HOST"
+          test -n "$API_USER"
+          test -n "$API_PATH"
+          SSH_PORT="${API_PORT:-22}"
+          ssh -p "$SSH_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$API_USER@$API_HOST" \
+            "cd '$API_PATH' && test -f .env.domestic-api && git pull --ff-only origin main && docker compose -f docker-compose.domestic.yml up -d --build && docker compose -f docker-compose.domestic.yml ps"
+
+      - name: Verify the API health endpoint
+        shell: bash
+        env:
+          API_HEALTH_URL: ${{ vars.DOMESTIC_API_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+          test -n "$API_HEALTH_URL"
+          curl --fail --silent --show-error --retry 10 --retry-delay 5 "$API_HEALTH_URL" | tee health.json
+          grep -q '"ok":true' health.json

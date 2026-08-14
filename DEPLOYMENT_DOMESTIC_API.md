@@ -240,7 +240,30 @@ docker image prune -f
 docker compose -f docker-compose.domestic.yml up -d --force-recreate junvideo-api
 ```
 
-## 八、回滚
+## 八、可选的 GitHub Actions 自动发布
+
+仓库包含 `.github/workflows/deploy-domestic-api.yml`，默认只允许手动触发，不会因为当前没有国内主机而自动失败。
+
+在 GitHub 仓库的 `Settings → Environments` 中创建环境 `domestic-api-production`，添加以下 Secrets：
+
+```text
+DOMESTIC_API_HOST        # 国内 API 主机公网 IP 或 SSH 主机名
+DOMESTIC_API_SSH_PORT    # 可选，默认 22
+DOMESTIC_API_SSH_USER
+DOMESTIC_API_SSH_KEY     # 专用部署私钥，不要使用个人主密钥
+DOMESTIC_API_KNOWN_HOSTS # ssh-keyscan 得到的固定主机指纹
+DOMESTIC_API_PATH        # 服务器上的 JunVideo 路径，例如 /opt/JunVideo
+```
+
+在同一个 Environment 中添加 Variable：
+
+```text
+DOMESTIC_API_HEALTH_URL=https://api.example.cn/api/health
+```
+
+服务器需要提前完成第三节和第四节，且部署用户能够执行 Docker Compose。之后打开 GitHub 的 `Actions → Deploy domestic API → Run workflow`，流程会拉取 `main`、重建容器并检查健康接口。
+
+## 九、回滚
 
 如果国内 API 部署异常：
 
