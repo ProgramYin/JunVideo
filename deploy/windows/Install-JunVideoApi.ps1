@@ -123,4 +123,4 @@ if ($health.StatusCode -ne 200) {
 
 Write-Host "JunVideo API is running on http://127.0.0.1:$Port/api/health"
 Write-Host "Task Scheduler entry: $taskName"
-Write-Host "For the Cloudflare Pages same-origin proxy, set API_ORIGIN to http://<server-ip>:$Port"
+Write-Host "For the Cloudflare Pages same-origin proxy, set API_ORIGIN to http://<server-ip-with-dashes>.sslip.io:$Port"

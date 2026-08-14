@@ -39,10 +39,11 @@ Cloudflare Containers 可以运行现有 `Dockerfile.api`，但需要 Workers Pa
        → http://<Windows 服务器 IP>:8080/api/*
 ```
 
-仓库中的 `functions/api/[[path]].ts` 已提供该代理，`public/_routes.json` 将 Function 限制在 `/api` 路径。Cloudflare Pages 项目的生产环境变量只需增加：
+仓库中的 `functions/api/[[path]].ts` 已提供该代理，`public/_routes.json` 将 Function 限制在 `/api` 路径。Cloudflare Pages 项目的生产环境变量只需增加。由于 Workers/Pages 的出站 `fetch()` 不接受 IP 字面量，临时可使用 `sslip.io` 将服务器 IP 转成主机名：
 
 ```text
-API_ORIGIN=http://<Windows 服务器 IP>:8080
+API_ORIGIN=http://<用短横线替换点号的 IP>.sslip.io:8080
+# 例如 IP 1.2.3.4 对应 http://1-2-3-4.sslip.io:8080
 ```
 
 同时不要把 `VITE_API_BASE_URL` 设成 Vercel 或裸 IP；删除该变量后，前端会使用默认的同源 `/api`。Windows API 仍需允许公网 TCP 8080，且 `.env.domestic-api` 中保持：
@@ -51,7 +52,7 @@ API_ORIGIN=http://<Windows 服务器 IP>:8080
 CORS_ORIGIN=https://jun-video.pages.dev
 ```
 
-这是无域名的可行上线方式，但 API 流量会经过 Pages Function，必须在发布后实测长视频下载和字幕流是否满足当前用量。
+这是无域名的临时上线方式，但 `sslip.io` 不是你拥有的正式域名，且会暴露服务器 IP；API 流量会经过 Pages Function，必须在发布后实测长视频下载和字幕流是否满足当前用量。正式生产仍建议绑定自己的 API 域名。
 
 ### Windows 服务器部署
 
