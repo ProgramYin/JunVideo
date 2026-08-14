@@ -58,6 +58,8 @@ CORS_ORIGIN=https://jun-video.pages.dev
 
 Windows 主机不能直接执行本目录的 Linux Docker/Nginx 脚本。请在管理员 PowerShell 中安装 Node.js 20+、Git 和 FFmpeg（确保 `ffmpeg.exe`、`ffprobe.exe` 在 PATH 中），然后执行：
 
+如果 `C:\JunVideo` 还不存在，不要先执行 `Set-Location C:\JunVideo`；先执行下面的 `git clone`，它会创建目录。
+
 ```powershell
 git clone https://github.com/ProgramYin/JunVideo.git C:\JunVideo
 Set-Location C:\JunVideo
