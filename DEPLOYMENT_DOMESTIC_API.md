@@ -58,6 +58,15 @@ CORS_ORIGIN=https://jun-video.pages.dev
 
 Windows 主机不能直接执行本目录的 Linux Docker/Nginx 脚本。请在管理员 PowerShell 中安装 Node.js 20+、Git 和 FFmpeg（确保 `ffmpeg.exe`、`ffprobe.exe` 在 PATH 中），然后执行：
 
+如果服务器还没有 Git、Node.js 或 FFmpeg，可以直接运行仓库提供的一键引导脚本。它会优先使用 `winget`，不可用时从 Git for Windows、Node.js 和 gyan.dev 的官方发布地址下载安装包，然后继续执行 API 部署：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+irm https://raw.githubusercontent.com/ProgramYin/JunVideo/main/deploy/windows/Bootstrap-JunVideoApi.ps1 | iex
+```
+
+这条命令必须在“管理员 PowerShell”中执行。首次运行会创建 `C:\JunVideo\.env.domestic-api` 并停止，填好 `DATABASE_URL`、`JWT_SECRET` 后再次运行同一条命令即可。
+
 如果 `C:\JunVideo` 还不存在，不要先执行 `Set-Location C:\JunVideo`；先执行下面的 `git clone`，它会创建目录。
 
 ```powershell
