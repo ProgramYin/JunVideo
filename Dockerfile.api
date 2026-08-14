@@ -1,0 +1,48 @@
+FROM node:24-bookworm-slim AS build
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY server ./server
+COPY tsconfig.json tsconfig.server.json ./
+RUN npm run build:api
+
+FROM node:24-bookworm-slim AS runtime
+
+ENV NODE_ENV=production \
+    PORT=8080 \
+    SERVE_CLIENT=false \
+    PARSER_MODE=yt-dlp \
+    YTDLP_PATH=/opt/junvideo-venv/bin/yt-dlp \
+    YTDLP_EXTRACTOR_ARGS=youtube:player_client=web_embedded,android \
+    YTDLP_JS_RUNTIMES=node \
+    FFMPEG_PATH=/usr/bin/ffmpeg \
+    FFPROBE_PATH=/usr/bin/ffprobe \
+    TEXT_EXTRACTION_ENABLED=true \
+    DOUYIN_BROWSER_FALLBACK=false \
+    DEV_VIP_ENABLED=false
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates ffmpeg python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/junvideo-venv
+
+RUN /opt/junvideo-venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/junvideo-venv/bin/pip install --no-cache-dir \
+         "yt-dlp[default]==2026.7.4" \
+         "yt-dlp-ejs==0.8.0"
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+
+COPY --from=build /app/dist/server ./dist/server
+
+USER node
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8080/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["node", "dist/server/src/index.js"]

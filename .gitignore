@@ -2,6 +2,7 @@ node_modules/
 dist/
 __pycache__/
 .env
+.env.domestic-api
 .runtime/
 bin/yt-dlp*
 *.log

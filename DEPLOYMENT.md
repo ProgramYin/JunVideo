@@ -1,5 +1,7 @@
 # JunVideo 线上部署手册
 
+> 当前正式目标架构已切换为 **Cloudflare Pages 前端 + 中国大陆 API**。请优先阅读 [DEPLOYMENT_DOMESTIC_API.md](./DEPLOYMENT_DOMESTIC_API.md)；本文档中的 Vercel API 流程仅作为备用/回滚方案保留。
+
 本文档记录 JunVideo 当前的线上地址、账号标识、部署流程、环境变量和常见故障处理。
 
 > 安全说明：本文档不保存任何密码、数据库连接串、JWT 密钥或 Cookie 内容。密码和 Secret 只应保存在 GitHub/Vercel/Cloudflare/Supabase 的密码管理器或环境变量中，不能提交到 Git。
