@@ -21,6 +21,14 @@ Nginx → Docker Compose → JunVideo API 容器
 
 Vercel 不再作为正式 API 入口，只保留为临时回滚或备用部署。前端与 API 通过 `VITE_API_BASE_URL` 解耦，业务代码不需要修改。
 
+## Cloudflare 能否直接托管后端
+
+本项目的 API 不是普通的 Pages 静态函数：它会启动 `yt-dlp`、`ffmpeg/ffprobe` 子进程，使用临时文件，并执行较长时间的视频解析和下载任务。因此，Cloudflare Pages Functions/普通 Workers 不能直接替代当前 API 容器。
+
+Cloudflare Containers 可以运行现有 `Dockerfile.api`，但需要 Workers Paid 计划和额外的 Worker/容器配置；其运行区域是 Cloudflare 全球区域列表中的节点，并不等于中国大陆服务器，不能据此承诺大陆网络访问效果。Cloudflare China Network 还需要 Enterprise、单独的 China Network 服务、ICP 和内容审核等条件，Pages 在中国大陆也有产品可用性限制。
+
+所以本方案仍采用：Cloudflare Pages 托管前端，国内云主机通过 Docker 托管 API。这样 `yt-dlp + FFmpeg` 与 API 在同一台国内主机内运行，Cloudflare 只负责前端，不需要把解析器拆成单独服务。
+
 ## 线上账号和地址
 
 | 项目 | 当前值或入口 |
@@ -69,6 +77,22 @@ docker compose version
 4. 申请 HTTPS 证书；Cloudflare Pages 调用 API 时必须使用 HTTPS。
 
 ## 三、上传并启动 API
+
+也可以使用仓库提供的初始化脚本。它会安装 Docker/Nginx/Certbot，创建配置模板并启动 API；第一次运行如果没有 `.env.domestic-api`，脚本只创建模板并安全退出，不会用占位 Secret 启动服务：
+
+```bash
+git clone https://github.com/ProgramYin/JunVideo.git /opt/JunVideo
+cd /opt/JunVideo
+sudo bash deploy/bootstrap-domestic-api.sh
+sudo nano /opt/JunVideo/.env.domestic-api
+sudo bash deploy/bootstrap-domestic-api.sh
+```
+
+如果 DNS 已经指向本机，可在第二次运行时指定域名：
+
+```bash
+sudo API_DOMAIN=api.example.cn bash deploy/bootstrap-domestic-api.sh
+```
 
 在服务器执行：
 
