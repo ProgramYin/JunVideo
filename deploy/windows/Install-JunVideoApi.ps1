@@ -30,6 +30,25 @@ function Set-EnvLineIfMissing {
   }
 }
 
+function Set-EnvLine {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Name,
+    [Parameter(Mandatory = $true)][string]$Value
+  )
+
+  $text = [System.IO.File]::ReadAllText($Path)
+  $pattern = "(?m)^$([regex]::Escape($Name))=.*$"
+  if ($text -match $pattern) {
+    $text = [regex]::Replace($text, $pattern, "$Name=$Value")
+  } else {
+    $suffix = if ($text.EndsWith("`n")) { "" } else { "`r`n" }
+    $text = "$text$suffix$Name=$Value`r`n"
+  }
+  $encoding = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $text, $encoding)
+}
+
 function Has-PlaceholderValue {
   param(
     [Parameter(Mandatory = $true)][string]$Text,
@@ -92,8 +111,8 @@ if (-not $ffmpeg -or -not $ffprobe) {
 }
 
 Set-EnvLineIfMissing -Path $envFile -Name "NODE_ENV" -Value "production"
-Set-EnvLineIfMissing -Path $envFile -Name "HOST" -Value "0.0.0.0"
-Set-EnvLineIfMissing -Path $envFile -Name "PORT" -Value ([string]$Port)
+Set-EnvLine -Path $envFile -Name "HOST" -Value "0.0.0.0"
+Set-EnvLine -Path $envFile -Name "PORT" -Value ([string]$Port)
 Set-EnvLineIfMissing -Path $envFile -Name "SERVE_CLIENT" -Value "false"
 Set-EnvLineIfMissing -Path $envFile -Name "PARSER_MODE" -Value "yt-dlp"
 Set-EnvLineIfMissing -Path $envFile -Name "YTDLP_PATH" -Value "bin/yt-dlp.exe"
@@ -117,6 +136,11 @@ $action = New-ScheduledTaskAction -Execute $nodePath -Argument ('"{0}"' -f $entr
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($existingTask) {
+  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+}
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Start-Sleep -Seconds 5
