@@ -899,7 +899,7 @@ export class YtDlpAdapter implements ParserAdapter {
           }
         }
         throw new ParserFailedError(
-          "This source requires a fresh authorized browser session. Configure YTDLP_COOKIES_FILE or YTDLP_COOKIES_FROM_BROWSER and retry.",
+          "This source requires a fresh authorized browser session. Configure YTDLP_COOKIES_FILE, YTDLP_COOKIES_FROM_BROWSER, or the YTDLP_COOKIES_ENCRYPTED + YTDLP_COOKIES_ENCRYPTION_KEY pair and retry.",
           { diagnostic },
         );
       }

@@ -50,6 +50,37 @@ test("yt-dlp download args select the retained video/audio pair and mp4 merge", 
   assert.equal(args[args.indexOf("--merge-output-format") + 1], "mp4");
 });
 
+test("yt-dlp media and subtitle downloads reuse the materialized cookie file", () => {
+  const appConfig = {
+    ytdlpCookiesFile: "/tmp/junvideo-ytdlp-cookies/cookies.txt",
+    ytdlpCookiesFromBrowser: undefined,
+    ytdlpRetries: 0,
+    ytdlpExtractorRetries: 0,
+    ytdlpFragmentRetries: 0,
+    ytdlpSocketTimeoutMs: 15_000,
+    ffmpegPath: "ffmpeg",
+  };
+  const downloadArgs = buildYtDlpDownloadArgs(
+    "https://www.douyin.com/video/123",
+    separatedVideo,
+    "C:\\temp\\junvideo-download\\media.%(ext)s",
+    appConfig,
+  );
+  const subtitleArgs = buildYtDlpSubtitleArgs(
+    "https://www.douyin.com/video/123",
+    { ...separatedVideo, id: "subtitle-en-0", mediaType: "subtitle", language: "en", automatic: false, ext: "vtt" },
+    "C:\\temp\\junvideo-download\\subtitle.%(ext)s",
+    appConfig,
+  );
+
+  for (const args of [downloadArgs, subtitleArgs]) {
+    const cookieIndex = args.indexOf("--cookies");
+    assert.deepEqual(args.slice(cookieIndex, cookieIndex + 2), [
+      "--cookies", "/tmp/junvideo-ytdlp-cookies/cookies.txt",
+    ]);
+  }
+});
+
 test("yt-dlp subtitle args refresh the selected automatic caption language", () => {
   const subtitle: MediaFormat = {
     ...separatedVideo,

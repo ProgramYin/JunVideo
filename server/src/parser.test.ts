@@ -80,6 +80,21 @@ test("yt-dlp metadata arguments use HTTP timeouts without automatic retries", ()
   assert.deepEqual(args.slice(-4), ["--dump-single-json", "--skip-download", "--", "https://www.bilibili.com/video/BV1test"]);
 });
 
+test("yt-dlp metadata arguments pass a materialized cookie file to any source", () => {
+  const args = buildYtDlpArgs("https://www.douyin.com/video/123", {
+    ytdlpCookiesFile: "/tmp/junvideo-ytdlp-cookies/cookies.txt",
+    ytdlpCookiesFromBrowser: undefined,
+    ytdlpRetries: 0,
+    ytdlpExtractorRetries: 0,
+    ytdlpFragmentRetries: 0,
+    ytdlpSocketTimeoutMs: 15_000,
+  });
+
+  assert.deepEqual(args.slice(args.indexOf("--cookies"), args.indexOf("--cookies") + 2), [
+    "--cookies", "/tmp/junvideo-ytdlp-cookies/cookies.txt",
+  ]);
+});
+
 test("yt-dlp formats normalize string numbers and preserve playable muxed streams", () => {
   const request: ParseRequest = {
     sourceUrl: "https://www.bilibili.com/video/BV1test",

@@ -300,6 +300,7 @@ export function createApiRouter(
         transcription: false,
         devVip: config.devVipEnabled,
         subtitles: true,
+        authorizedSession: config.ytdlpCookieSession !== "none",
       },
     });
   });

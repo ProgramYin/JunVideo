@@ -82,6 +82,31 @@ npm run test        # 服务端测试（若有）
 - Some unauthenticated Douyin/Xiaohongshu sources still require a fresh authorized browser session. Configure `YTDLP_COOKIES_FILE` or `YTDLP_COOKIES_FROM_BROWSER` when you are authorized to access that content; DRM, login-wall, and paywall bypass are not provided.
 - For Douyin specifically, JunVideo now falls back to a one-time isolated Chrome/Edge page when yt-dlp's direct detail request is rejected. The fallback reads only the public page response and does not import your browser profile or cookies. Set `DOUYIN_BROWSER_FALLBACK=false` to disable it, or set `JUNVIDEO_BROWSER_PATH` when Chrome/Edge is installed outside the standard path.
 
+### Vercel encrypted Cookie session
+
+Some Douyin links return HTTP 403 unless yt-dlp has a fresh authorized browser
+session. A Vercel deployment cannot read the browser profile on your computer,
+so use the encrypted cookie mode instead of `YTDLP_COOKIES_FROM_BROWSER`:
+
+```powershell
+node scripts/encrypt-ytdlp-cookies.mjs D:\private\douyin-cookies.txt
+```
+
+Add the two printed lines as separate Vercel Production environment variables:
+
+```text
+YTDLP_COOKIES_ENCRYPTION_KEY=<base64url key>
+YTDLP_COOKIES_ENCRYPTED=jv1.<iv>.<auth-tag>.<ciphertext>
+```
+
+The input must be a Netscape-format cookie export. The API decrypts it only at
+runtime into a `0600` file under the container temp directory and passes that
+file to yt-dlp for parsing, media downloads, and subtitle downloads. The
+plaintext cookie file is not written to the repository, build output, logs, or
+the database. Configure only one cookie source: `YTDLP_COOKIES_FILE`,
+`YTDLP_COOKIES_FROM_BROWSER`, or the encrypted pair above. `/api/health` exposes
+only a boolean `features.authorizedSession` indicator, never the secret.
+
 ## GitHub upstream adapters
 
 - The primary engine is the official [yt-dlp](https://github.com/yt-dlp/yt-dlp). `npm run setup:ytdlp` downloads the current Windows binary from its GitHub release endpoint. JunVideo keeps the upstream extractor boundary instead of copying platform-specific code into the API.

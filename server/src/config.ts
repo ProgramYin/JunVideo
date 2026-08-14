@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
+import { decodeCookieEncryptionKey, materializeEncryptedCookieFile } from "./yt-dlp-cookies.js";
 
 export type ParserMode = "mock" | "yt-dlp" | "auto";
 
@@ -28,6 +29,11 @@ const envSchema = z.object({
   YTDLP_REMOTE_COMPONENTS: z.string().optional(),
   YTDLP_COOKIES_FILE: z.string().optional(),
   YTDLP_COOKIES_FROM_BROWSER: z.string().optional(),
+  // The encrypted Netscape cookie envelope and its separate 32-byte key are
+  // intended for Vercel environment secrets. The plaintext only exists in a
+  // 0600 file under the runtime temp directory.
+  YTDLP_COOKIES_ENCRYPTED: z.string().optional(),
+  YTDLP_COOKIES_ENCRYPTION_KEY: z.string().optional(),
   TEXT_EXTRACTION_ENABLED: z.enum(["true", "false"]).default("true"),
   TEXT_EXTRACTION_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(120_000).default(30_000),
   TEXT_EXTRACTION_MAX_BYTES: z.coerce.number().int().min(65_536).max(16 * 1024 * 1024).default(8 * 1024 * 1024),
@@ -73,6 +79,8 @@ const devVipEnabled = parsedEnv.DEV_VIP_ENABLED
 const serveClient = parsedEnv.SERVE_CLIENT ? parsedEnv.SERVE_CLIENT === "true" : isProduction;
 const ytdlpCookiesFile = parsedEnv.YTDLP_COOKIES_FILE?.trim() || undefined;
 const ytdlpCookiesFromBrowser = parsedEnv.YTDLP_COOKIES_FROM_BROWSER?.trim() || undefined;
+const ytdlpCookiesEncrypted = parsedEnv.YTDLP_COOKIES_ENCRYPTED?.trim() || undefined;
+const ytdlpCookiesEncryptionKey = parsedEnv.YTDLP_COOKIES_ENCRYPTION_KEY?.trim() || undefined;
 const ffmpegPath = parsedEnv.FFMPEG_PATH?.trim() || "ffmpeg";
 const ffprobePath = parsedEnv.FFPROBE_PATH?.trim() || "ffprobe";
 const xhsDownloaderApiUrl = parsedEnv.XHS_DOWNLOADER_API_URL?.trim() || undefined;
@@ -91,8 +99,26 @@ if (xhsDownloaderApiUrl) {
   }
 }
 
-if (ytdlpCookiesFile && ytdlpCookiesFromBrowser) {
-  throw new Error("Configure only one of YTDLP_COOKIES_FILE or YTDLP_COOKIES_FROM_BROWSER.");
+if ([ytdlpCookiesFile, ytdlpCookiesFromBrowser, ytdlpCookiesEncrypted].filter(Boolean).length > 1) {
+  throw new Error("Configure only one YTDLP cookie source: file, browser, or encrypted.");
+}
+if (ytdlpCookiesEncrypted && !ytdlpCookiesEncryptionKey) {
+  throw new Error("YTDLP_COOKIES_ENCRYPTION_KEY is required when YTDLP_COOKIES_ENCRYPTED is configured.");
+}
+if (!ytdlpCookiesEncrypted && ytdlpCookiesEncryptionKey) {
+  throw new Error("YTDLP_COOKIES_ENCRYPTED is required when YTDLP_COOKIES_ENCRYPTION_KEY is configured.");
+}
+
+let encryptedCookieCleanup: (() => void) | undefined;
+let resolvedYtdlpCookiesFile = ytdlpCookiesFile;
+if (ytdlpCookiesEncrypted && ytdlpCookiesEncryptionKey) {
+  const materialized = materializeEncryptedCookieFile(
+    ytdlpCookiesEncrypted,
+    decodeCookieEncryptionKey(ytdlpCookiesEncryptionKey),
+  );
+  resolvedYtdlpCookiesFile = materialized.filePath;
+  encryptedCookieCleanup = materialized.cleanup;
+  process.once("exit", () => encryptedCookieCleanup?.());
 }
 
 function resolveYtdlpPath(value: string): string {
@@ -122,8 +148,15 @@ export const config = {
   ytdlpExtractorArgs: parsedEnv.YTDLP_EXTRACTOR_ARGS.trim(),
   ytdlpJsRuntimes: parsedEnv.YTDLP_JS_RUNTIMES?.trim() || undefined,
   ytdlpRemoteComponents: parsedEnv.YTDLP_REMOTE_COMPONENTS?.trim() || undefined,
-  ytdlpCookiesFile,
+  ytdlpCookiesFile: resolvedYtdlpCookiesFile,
   ytdlpCookiesFromBrowser,
+  ytdlpCookieSession: ytdlpCookiesEncrypted
+    ? "encrypted"
+    : ytdlpCookiesFile
+      ? "file"
+      : ytdlpCookiesFromBrowser
+        ? "browser"
+        : "none",
   textExtractionEnabled: parsedEnv.TEXT_EXTRACTION_ENABLED === "true",
   textExtractionTimeoutMs: parsedEnv.TEXT_EXTRACTION_TIMEOUT_MS,
   textExtractionMaxBytes: parsedEnv.TEXT_EXTRACTION_MAX_BYTES,
