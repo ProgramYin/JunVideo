@@ -3,6 +3,7 @@ dist/
 __pycache__/
 .env
 .env.domestic-api
+服务器.txt
 .runtime/
 bin/yt-dlp*
 *.log

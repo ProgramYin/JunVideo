@@ -29,6 +29,45 @@ Cloudflare Containers 可以运行现有 `Dockerfile.api`，但需要 Workers Pa
 
 所以本方案仍采用：Cloudflare Pages 托管前端，国内云主机通过 Docker 托管 API。这样 `yt-dlp + FFmpeg` 与 API 在同一台国内主机内运行，Cloudflare 只负责前端，不需要把解析器拆成单独服务。
 
+### 没有域名时：使用 Pages 同源代理
+
+当前只有 Windows 服务器、没有 API 域名时，可以让 Pages Function 代理 `/api/*`，前端继续使用同源的 `/api`，不需要把裸 IP 写进浏览器请求，也不需要在 Windows 服务器上配置 HTTPS：
+
+```text
+浏览器 → https://jun-video.pages.dev/api/*
+       → Cloudflare Pages Function
+       → http://<Windows 服务器 IP>:8080/api/*
+```
+
+仓库中的 `functions/api/[[path]].ts` 已提供该代理，`public/_routes.json` 将 Function 限制在 `/api` 路径。Cloudflare Pages 项目的生产环境变量只需增加：
+
+```text
+API_ORIGIN=http://<Windows 服务器 IP>:8080
+```
+
+同时不要把 `VITE_API_BASE_URL` 设成 Vercel 或裸 IP；删除该变量后，前端会使用默认的同源 `/api`。Windows API 仍需允许公网 TCP 8080，且 `.env.domestic-api` 中保持：
+
+```text
+CORS_ORIGIN=https://jun-video.pages.dev
+```
+
+这是无域名的可行上线方式，但 API 流量会经过 Pages Function，必须在发布后实测长视频下载和字幕流是否满足当前用量。
+
+### Windows 服务器部署
+
+Windows 主机不能直接执行本目录的 Linux Docker/Nginx 脚本。请在管理员 PowerShell 中安装 Node.js 20+、Git 和 FFmpeg（确保 `ffmpeg.exe`、`ffprobe.exe` 在 PATH 中），然后执行：
+
+```powershell
+git clone https://github.com/ProgramYin/JunVideo.git C:\JunVideo
+Set-Location C:\JunVideo
+Copy-Item .env.domestic-api.example .env.domestic-api
+notepad .env.domestic-api
+Set-ExecutionPolicy -Scope Process Bypass
+& .\deploy\windows\Install-JunVideoApi.ps1
+```
+
+第一次运行只创建配置时，填好 `DATABASE_URL`、`JWT_SECRET` 后再次运行。脚本会下载 Windows 版 `yt-dlp`、编译 API、开放 TCP 8080，并注册 `JunVideo API` 开机启动任务。健康检查通过后，再在 Pages 设置 `API_ORIGIN` 并重新部署前端。
+
 ## 线上账号和地址
 
 | 项目 | 当前值或入口 |
