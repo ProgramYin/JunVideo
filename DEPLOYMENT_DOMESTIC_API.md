@@ -66,6 +66,13 @@ docker compose version
 
 ## 二、准备 API 域名
 
+API 域名不是 Docker 或后端程序本身的硬性要求，但对当前线上前端是实际要求：
+
+- 临时测试可以直接访问 `http://服务器IP:8080/api/health`，但不应把 8080 暴露到公网。
+- Cloudflare Pages 是 HTTPS 页面，不能稳定调用 `http://服务器IP/api`，浏览器会按混合内容策略拦截。
+- 使用 `https://服务器IP/api` 理论上需要证书的 SAN 明确包含该 IP，证书申请、续期和客户端兼容性都比域名复杂。
+- 因此生产环境建议使用一个 API 子域名，例如 `api.example.cn`；不需要单独购买一套域名，已有域名增加一条 `A` 记录即可。
+
 1. 在 DNS 服务商添加 `A` 记录，例如：
 
    ```text
