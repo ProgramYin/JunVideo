@@ -67,7 +67,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 & .\deploy\windows\Install-JunVideoApi.ps1
 ```
 
-第一次运行只创建配置时，填好 `DATABASE_URL`、`JWT_SECRET` 后再次运行。脚本会下载 Windows 版 `yt-dlp`、编译 API、开放 TCP 8080，并注册 `JunVideo API` 开机启动任务；同时补充 `HOST=0.0.0.0`，避免 API 只监听 localhost。健康检查通过后，再在 Pages 设置 `API_ORIGIN` 并重新部署前端。
+脚本每次执行都会先从 `main` 拉取最新代码。第一次运行只创建配置时，填好 `DATABASE_URL`、`JWT_SECRET` 后再次运行。脚本会下载 Windows 版 `yt-dlp`、编译 API、开放 TCP 8080，并注册 `JunVideo API` 开机启动任务；同时补充 `HOST=0.0.0.0`，避免 API 只监听 localhost。健康检查通过后，再在 Pages 设置 `API_ORIGIN` 并重新部署前端。
 
 Windows 服务器上可先确认监听和本机健康检查：
 

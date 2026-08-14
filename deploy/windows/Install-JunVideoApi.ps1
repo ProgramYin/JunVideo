@@ -62,6 +62,10 @@ if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
 
 Set-Location -LiteralPath $RepoDir
 
+if (Test-Path ".git") {
+  git pull --ff-only origin main
+}
+
 if (-not (Test-Path ".env.domestic-api")) {
   Copy-Item ".env.domestic-api.example" ".env.domestic-api"
   Write-Host "Created $RepoDir\.env.domestic-api. Fill DATABASE_URL and JWT_SECRET, then rerun this script."
