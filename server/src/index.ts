@@ -2,8 +2,8 @@ import { app } from "./app.js";
 import { closeDatabase } from "./db.js";
 import { config } from "./config.js";
 
-const server = app.listen(config.port, () => {
-  console.log(`JunVideo API listening on http://localhost:${config.port}`);
+const server = app.listen(config.port, config.host, () => {
+  console.log(`JunVideo API listening on http://${config.host}:${config.port}`);
   console.log(`Parser mode: ${config.parserMode}; local quota: ${config.dailyParseLimit} accepted attempts/day`);
 });
 
@@ -29,4 +29,3 @@ async function shutdown(signal: string): Promise<void> {
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
-

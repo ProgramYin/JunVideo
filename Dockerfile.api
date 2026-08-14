@@ -11,6 +11,7 @@ RUN npm run build:api
 FROM node:24-bookworm-slim AS runtime
 
 ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
     PORT=8080 \
     SERVE_CLIENT=false \
     PARSER_MODE=yt-dlp \

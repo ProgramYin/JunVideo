@@ -9,6 +9,7 @@ const isProduction = process.env.NODE_ENV === "production";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  HOST: z.string().min(1).default("0.0.0.0"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   SERVE_CLIENT: z.enum(["true", "false"]).optional(),
   DATABASE_URL: z.string().min(1).default("postgresql://postgres:postgres@localhost:5432/junvideo"),
@@ -133,6 +134,7 @@ function resolveYtdlpPath(value: string): string {
 export const config = {
   nodeEnv: parsedEnv.NODE_ENV,
   isProduction,
+  host: parsedEnv.HOST,
   port: parsedEnv.PORT,
   serveClient,
   databaseUrl: parsedEnv.DATABASE_URL,

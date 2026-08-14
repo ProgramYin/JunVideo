@@ -88,6 +88,7 @@ if (-not $ffmpeg -or -not $ffprobe) {
 }
 
 Set-EnvLineIfMissing -Path $envFile -Name "NODE_ENV" -Value "production"
+Set-EnvLineIfMissing -Path $envFile -Name "HOST" -Value "0.0.0.0"
 Set-EnvLineIfMissing -Path $envFile -Name "PORT" -Value ([string]$Port)
 Set-EnvLineIfMissing -Path $envFile -Name "SERVE_CLIENT" -Value "false"
 Set-EnvLineIfMissing -Path $envFile -Name "PARSER_MODE" -Value "yt-dlp"
@@ -119,6 +120,11 @@ Start-Sleep -Seconds 5
 $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 20
 if ($health.StatusCode -ne 200) {
   throw "JunVideo API health check returned HTTP $($health.StatusCode)."
+}
+
+$listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+if ($listeners.Count -eq 0) {
+  throw "JunVideo API is healthy locally but no listening TCP socket was found on port $Port."
 }
 
 Write-Host "JunVideo API is running on http://127.0.0.1:$Port/api/health"
